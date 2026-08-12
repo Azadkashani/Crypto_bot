@@ -16,8 +16,10 @@ class DataFetcher:
     """
     دریافت‌کننده داده از صرافی و مدیریت کش محلی.
     """
+
     def __init__(self):
-        self.exchange = ccxt.gateio(EXCHANGE_OPTIONS)
+        # اصلاح: استفاده از ccxt.gate برای Gate.io
+        self.exchange = ccxt.gate(EXCHANGE_OPTIONS)
         self.exchange.load_markets()
         # اطمینان از وجود پوشه دیتا
         os.makedirs(DATA_DIR, exist_ok=True)
@@ -105,7 +107,3 @@ class DataFetcher:
         # ذخیره ترکیب نهایی
         self.save_data(combined, symbol, timeframe)
         return combined.loc[combined.index >= since_date].copy()
-
-
-# یک نمونه سراسری برای استفاده در سایر ماژول‌ها (اختیاری)
-fetcher = DataFetcher()
