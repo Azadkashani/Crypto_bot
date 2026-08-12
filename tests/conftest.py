@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-# افزودن پوشهٔ اصلی پروژه به sys.path تا import ماژول‌ها ممکن شود
+# افزودن پوشهٔ اصلی پروژه به sys.path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -34,8 +34,11 @@ def sample_ohlcv_data():
 @pytest.fixture
 def mock_fetcher(mocker):
     """
-    یک DataFetcher که fetch_ohlcv را mock می‌کند.
+    یک DataFetcher که fetch_ohlcv را mock می‌کند
+    و از اتصال واقعی به صرافی جلوگیری می‌نماید.
     """
+    # جلوگیری از اتصال واقعی در constructor
+    mocker.patch('ccxt.gate')
     fetcher = DataFetcher()
     mocker.patch.object(fetcher, 'fetch_ohlcv', return_value=None)
     return fetcher
