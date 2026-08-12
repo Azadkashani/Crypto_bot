@@ -36,3 +36,25 @@ DATA_DIR = 'data/'
 
 # تنظیمات عمومی
 UTC = True
+
+# --- پارامترهای اندیکاتورهای فاز ۳ ---
+
+# EMA
+EMA_SHORT = 9
+EMA_LONG = 21
+
+# RSI
+RSI_PERIOD = 14
+
+# ATR
+ATR_PERIOD = 14
+
+# ADX
+ADX_PERIOD = 14
+
+# Volume SMA
+VOLUME_SMA_PERIOD = 20
+
+# Swing detection
+SWING_LEFT_BARS = 3      # تعداد کندل‌های قبل از قله/دره
+SWING_RIGHT_BARS = 3     # تعداد کندل‌های بعد از قله/دره برای تأیید
