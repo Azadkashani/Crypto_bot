@@ -30,17 +30,8 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
                     as_of: pd.Timestamp = None) -> dict:
     """
     تولید سیگنال LONG/SHORT بر اساس ترتیب تاییدشده.
-
-    پارامترها:
-        df_4h: دیتافریم 4 ساعته.
-        df_1h: دیتافریم 1 ساعته.
-        df_5m: دیتافریم 5 دقیقه‌ای.
-        as_of: (اختیاری) زمان تصمیم‌گیری. اگر None باشد، آخرین کندل هر دیتافریم
-              به عنوان آخرین کندل بسته در نظر گرفته می‌شود.
-
-    خروجی:
-        dict با ساختار مشخص.
     """
+
     def _filter_closed(df: pd.DataFrame, tf: str) -> pd.DataFrame:
         if df.empty:
             return df
@@ -55,7 +46,14 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
     df_5m_closed = _filter_closed(df_5m, config.TIMEFRAME_5M)
 
     if df_5m_closed.empty:
-        return {"signal": "NONE", "valid": False, "reason": "Insufficient 5m data"}
+        return {
+            "signal": "NONE",
+            "valid": False,
+            "reason": "Insufficient 5m data",
+            "choch": False,
+            "bos": False,
+            "rsi_recovery": False
+        }
 
     r4h = regime.get_regime(df_4h_closed) if not df_4h_closed.empty else regime.REGIME_RANGE
     r1h = regime.get_regime(df_1h_closed) if not df_1h_closed.empty else regime.REGIME_RANGE
@@ -70,14 +68,24 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
             "valid": False,
             "reason": "4H and 1H regimes are not aligned",
             "regime_4h": r4h,
-            "regime_1h": r1h
+            "regime_1h": r1h,
+            "choch": False,
+            "bos": False,
+            "rsi_recovery": False
         }
 
     rsi_df = indicators.add_rsi(df_5m_closed, period=config.RSI_PERIOD)
     rsi_col = f'rsi_{config.RSI_PERIOD}'
     rsi_series = rsi_df[rsi_col].dropna()
     if len(rsi_series) < 2:
-        return {"signal": "NONE", "valid": False, "reason": "Insufficient RSI data"}
+        return {
+            "signal": "NONE",
+            "valid": False,
+            "reason": "Insufficient RSI data",
+            "choch": False,
+            "bos": False,
+            "rsi_recovery": False
+        }
 
     choch_df = choch.detect_choch(df_5m_closed)
     bos_df = bos.detect_bos(df_5m_closed)
@@ -115,9 +123,9 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
             "regime_4h": r4h,
             "regime_1h": r1h,
             "rsi_5m": round(latest_rsi, 2),
-            "rsi_recovery": rsi_condition,
-            "choch": has_prior_choch,
-            "bos": bos_condition
+            "rsi_recovery": bool(rsi_condition),
+            "choch": bool(has_prior_choch),
+            "bos": bool(bos_condition)
         }
 
     return {
@@ -128,8 +136,8 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
         "regime_4h": r4h,
         "regime_1h": r1h,
         "rsi_5m": round(latest_rsi, 2),
-        "rsi_recovery": rsi_condition,
-        "choch": has_prior_choch,
-        "bos": bos_condition,
+        "rsi_recovery": bool(rsi_condition),
+        "choch": bool(has_prior_choch),
+        "bos": bool(bos_condition),
         "timestamp": latest_5m
     }
