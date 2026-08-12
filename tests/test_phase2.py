@@ -94,25 +94,19 @@ def test_incomplete_candle_removal(mocker):
     complete_time = now - timedelta(minutes=10)
     incomplete_time = now - timedelta(minutes=2)
 
+    # داده خام به فرمت ccxt: [timestamp_ms, open, high, low, close, volume]
     fake_raw = [
         [int(complete_time.timestamp() * 1000), 100, 102, 99, 101, 50],
         [int(incomplete_time.timestamp() * 1000), 101, 103, 100, 102, 30]
     ]
 
-    # lambda بدون self، فقط آرگومان‌های صریح را می‌گیرد
-    mocker.patch.object(
-        DataFetcher,
-        'fetch_ohlcv',
-        side_effect=lambda symbol, timeframe, since=None, limit=None, remove_incomplete_candle=False: pd.DataFrame(
-            [
-                [datetime.fromtimestamp(fake_raw[0][0] / 1000, tz=timezone.utc), 100, 102, 99, 101, 50],
-                [datetime.fromtimestamp(fake_raw[1][0] / 1000, tz=timezone.utc), 101, 103, 100, 102, 30]
-            ],
-            columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
-        ).set_index('timestamp')
-    )
-
+    # یک نمونه واقعی از DataFetcher می‌سازیم
     fetcher = DataFetcher()
+
+    # فقط متد exchange.fetch_ohlcv را mock می‌کنیم تا داده خام را برگرداند
+    mocker.patch.object(fetcher.exchange, 'fetch_ohlcv', return_value=fake_raw)
+
+    # حالا fetch_ohlcv اصلی منطق حذف کندل ناقص را اعمال می‌کند
     df_full = fetcher.fetch_ohlcv('BTC/USDT:USDT', '5m', remove_incomplete_candle=False)
     assert len(df_full) == 2
 
