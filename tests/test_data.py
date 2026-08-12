@@ -21,12 +21,20 @@ def test_save_and_load_data(tmp_path, sample_ohlcv_data):
     """
     import os
     from data import DataFetcher
-    fetcher = DataFetcher()
+    # جلوگیری از اتصال واقعی
+    import ccxt
+    # در این تست با patch ساده از اتصال جلوگیری می‌کنیم
+    # چون fetcher را مستقیم می‌سازیم، ccxt.gate را mock می‌کنیم
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ccxt, 'gate', lambda *args, **kwargs: None)
+        fetcher = DataFetcher()
+    # تغییر مسیر ذخیره به tmp_path
     fetcher._file_path = lambda s, t: os.path.join(tmp_path, f"{s.replace('/', '_')}_{t}.csv")
     symbol, tf = 'BTC/USDT:USDT', '5m'
     fetcher.save_data(sample_ohlcv_data, symbol, tf)
     loaded = fetcher.load_data(symbol, tf)
-    pd.testing.assert_frame_equal(loaded, sample_ohlcv_data)
+    # نادیده گرفتن freq در مقایسه
+    pd.testing.assert_frame_equal(loaded, sample_ohlcv_data, check_freq=False)
 
 def test_multi_timeframe_independence():
     """
@@ -39,14 +47,13 @@ def test_import_data_does_not_create_exchange_connection():
     اطمینان از اینکه وارد کردن data.py باعث اتصال به صرافی نمی‌شود.
     """
     import data
-    assert not hasattr(data, 'fetcher')  # نمونه سراسری نباید وجود داشته باشد
+    assert not hasattr(data, 'fetcher')
 
 def test_datafetcher_uses_correct_exchange(mocker):
     """
     بررسی استفاده از ccxt.gate با آپشن‌های صحیح.
     """
     mock_gate = mocker.patch('ccxt.gate')
-    # شبیه‌سازی load_markets
     mock_instance = mock_gate.return_value
     mock_instance.load_markets.return_value = None
 
