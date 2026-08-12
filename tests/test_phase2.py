@@ -4,7 +4,6 @@ from datetime import datetime, timezone, timedelta
 from data import DataFetcher
 import numpy as np
 
-# نگاشت فرکانس‌های ccxt به فرمت قابل قبول pandas
 FREQ_MAP = {
     '5m': '5min',
     '1h': '1h',
@@ -16,9 +15,6 @@ def _to_pandas_freq(ccxt_timeframe: str) -> str:
     return FREQ_MAP.get(ccxt_timeframe, ccxt_timeframe)
 
 
-# ------------------------------------------------------------------
-# تست استقلال تایم‌فریم‌ها
-# ------------------------------------------------------------------
 def test_timeframe_independence(mocker):
     call_counts = {}
 
@@ -32,7 +28,6 @@ def test_timeframe_independence(mocker):
             'volume': [10, 20]
         }, index=idx[:2])
 
-    # Mock متد fetch_ohlcv کلاس (نه نمونه) تا نمونه‌سازی‌های بعدی هم از آن استفاده کنند
     mocker.patch.object(DataFetcher, 'fetch_ohlcv', mock_fetch)
 
     fetcher = DataFetcher()
@@ -44,11 +39,7 @@ def test_timeframe_independence(mocker):
         assert call_counts[tf] == 1, f"fetch_ohlcv for {tf} should be called exactly once"
 
 
-# ------------------------------------------------------------------
-# تست ترتیب زمانی و یکتایی
-# ------------------------------------------------------------------
 def test_chronological_order_and_uniqueness(tmp_path, mocker):
-    # Mock ccxt.gate تا DataFetcher بدون اتصال واقعی ساخته شود
     mock_exchange = mocker.Mock()
     mock_exchange.load_markets = mocker.Mock()
     mocker.patch('ccxt.gate', return_value=mock_exchange)
@@ -68,7 +59,7 @@ def test_chronological_order_and_uniqueness(tmp_path, mocker):
         'close': [12, 13, 13, 14, 15],
         'volume': [100, 110, 110, 120, 130]
     }, index=pd.DatetimeIndex(times, tz='UTC'))
-    df = df.sort_index(ascending=False)  # نزولی
+    df = df.sort_index(ascending=False)
 
     import os
     fetcher = DataFetcher()
@@ -78,13 +69,10 @@ def test_chronological_order_and_uniqueness(tmp_path, mocker):
     loaded = fetcher.load_data(symbol, tf)
 
     assert loaded.index.is_monotonic_increasing
-    # چون ذخیره/بارگذاری تکراری‌ها را حذف نمی‌کند، طول برابر است
+    # طول باید برابر باشد (تکراری در load_data حذف نمی‌شود)
     assert len(loaded) == len(df)
 
 
-# ------------------------------------------------------------------
-# تست عدم نشت داده‌های آینده (look-ahead bias)
-# ------------------------------------------------------------------
 def test_no_future_data_leakage():
     base = datetime(2025, 1, 1, tzinfo=timezone.utc)
     dates = pd.date_range(start=base, periods=10, freq='1h', tz='UTC')
@@ -102,21 +90,18 @@ def test_no_future_data_leakage():
         assert len(available) == i + 1
 
 
-# ------------------------------------------------------------------
-# تست حذف کندل ناقص
-# ------------------------------------------------------------------
 def test_incomplete_candle_removal(mocker):
     now = datetime.now(timezone.utc)
     complete_time = now - timedelta(minutes=10)
-    incomplete_time = now - timedelta(minutes=2)  # ناقص
+    incomplete_time = now - timedelta(minutes=2)
 
     fake_raw = [
         [int(complete_time.timestamp() * 1000), 100, 102, 99, 101, 50],
         [int(incomplete_time.timestamp() * 1000), 101, 103, 100, 102, 30]
     ]
 
-    # Mock فقط متد fetch_ohlcv صرافی (ccxt) تا منطق داخلی DataFetcher اجرا شود
-    mocker.patch.object(DataFetcher, 'fetch_ohlcv', side_effect=lambda self, symbol, timeframe, since=None, limit=None, remove_incomplete_candle=False: 
+    # lambda با هر ۶ پارامتر self, symbol, timeframe, since, limit, remove_incomplete_candle
+    mocker.patch.object(DataFetcher, 'fetch_ohlcv', side_effect=lambda self, symbol, timeframe, since=None, limit=None, remove_incomplete_candle=False:
         pd.DataFrame([
             [datetime.fromtimestamp(fake_raw[0][0]/1000, tz=timezone.utc), 100, 102, 99, 101, 50],
             [datetime.fromtimestamp(fake_raw[1][0]/1000, tz=timezone.utc), 101, 103, 100, 102, 30]
@@ -128,14 +113,10 @@ def test_incomplete_candle_removal(mocker):
     assert len(df_full) == 2
 
     df_clean = fetcher.fetch_ohlcv('BTC/USDT:USDT', '5m', remove_incomplete_candle=True)
-    # با توجه به منطق remove_incomplete_candle در data.py، فقط کندل کامل باقی می‌ماند
     assert len(df_clean) == 1
     assert df_clean.index[0] == complete_time
 
 
-# ------------------------------------------------------------------
-# تست یکپارچگی داده واقعی (اختیاری)
-# ------------------------------------------------------------------
 @pytest.mark.integration
 def test_real_data_fetch():
     try:
