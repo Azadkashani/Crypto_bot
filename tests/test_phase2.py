@@ -91,27 +91,33 @@ def test_no_future_data_leakage():
 
 def test_incomplete_candle_removal(mocker):
     now = datetime.now(timezone.utc)
-    complete_time = now - timedelta(minutes=10)
-    incomplete_time = now - timedelta(minutes=2)
+    # ایجاد زمان‌ها با دقت میکروثانیه
+    complete_time_us = now - timedelta(minutes=10)
+    incomplete_time_us = now - timedelta(minutes=2)
+    # کاهش دقت به میلی‌ثانیه (CCXT از میلی‌ثانیه استفاده می‌کند)
+    complete_time = datetime.fromtimestamp(
+        int(complete_time_us.timestamp() * 1000) / 1000.0,
+        tz=timezone.utc
+    )
+    incomplete_time = datetime.fromtimestamp(
+        int(incomplete_time_us.timestamp() * 1000) / 1000.0,
+        tz=timezone.utc
+    )
 
-    # داده خام به فرمت ccxt: [timestamp_ms, open, high, low, close, volume]
     fake_raw = [
         [int(complete_time.timestamp() * 1000), 100, 102, 99, 101, 50],
         [int(incomplete_time.timestamp() * 1000), 101, 103, 100, 102, 30]
     ]
 
-    # یک نمونه واقعی از DataFetcher می‌سازیم
     fetcher = DataFetcher()
-
-    # فقط متد exchange.fetch_ohlcv را mock می‌کنیم تا داده خام را برگرداند
     mocker.patch.object(fetcher.exchange, 'fetch_ohlcv', return_value=fake_raw)
 
-    # حالا fetch_ohlcv اصلی منطق حذف کندل ناقص را اعمال می‌کند
     df_full = fetcher.fetch_ohlcv('BTC/USDT:USDT', '5m', remove_incomplete_candle=False)
     assert len(df_full) == 2
 
     df_clean = fetcher.fetch_ohlcv('BTC/USDT:USDT', '5m', remove_incomplete_candle=True)
     assert len(df_clean) == 1
+    # مقایسه با complete_time که دقت میلی‌ثانیه دارد
     assert df_clean.index[0] == complete_time
 
 
