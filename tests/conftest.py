@@ -19,7 +19,6 @@ def sample_ohlcv_data():
         'close': np.random.randn(30).cumsum() + 50000,
         'volume': np.random.randint(100, 1000, 30)
     }, index=index)
-    # اطمینان از high >= low, open/close inside range
     df['high'] = df[['open','close','high']].max(axis=1)
     df['low'] = df[['open','close','low']].min(axis=1)
     return df
@@ -27,7 +26,7 @@ def sample_ohlcv_data():
 @pytest.fixture
 def mock_fetcher(mocker):
     """
-    یک DataFetcher که fetch_ohlcv را mock می‌کند تا از اینترنت بی‌نیاز باشیم.
+    یک DataFetcher که fetch_ohlcv را mock می‌کند.
     """
     fetcher = DataFetcher()
     mocker.patch.object(fetcher, 'fetch_ohlcv', return_value=None)
