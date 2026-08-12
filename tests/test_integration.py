@@ -14,7 +14,12 @@ def test_core_imports():
     except ImportError as e:
         pytest.fail(f"Import failed: {e}")
 
-def test_fetcher_singleton():
-    """data.fetcher یک نمونه از DataFetcher است."""
-    from data import fetcher
+def test_datafetcher_instantiation_no_network(mocker):
+    """
+    اطمینان از اینکه می‌توان DataFetcher را بدون اتصال واقعی نمونه‌سازی کرد.
+    """
+    mocker.patch('ccxt.gate')
+    from data import DataFetcher
+    fetcher = DataFetcher()
     assert fetcher is not None
+    assert hasattr(fetcher, 'exchange')
