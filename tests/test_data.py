@@ -15,19 +15,19 @@ def test_fetch_ohlcv_structure(mock_fetcher, sample_ohlcv_data):
     assert str(df.index.tz) == 'UTC'
     assert df.index.is_monotonic_increasing
 
-def test_save_and_load_data(tmp_path, sample_ohlcv_data):
+def test_save_and_load_data(tmp_path, sample_ohlcv_data, mocker):
     """
     تست ذخیره‌سازی و بارگذاری داده از فایل CSV.
     """
     import os
     from data import DataFetcher
-    # جلوگیری از اتصال واقعی
-    import ccxt
-    # در این تست با patch ساده از اتصال جلوگیری می‌کنیم
-    # چون fetcher را مستقیم می‌سازیم، ccxt.gate را mock می‌کنیم
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(ccxt, 'gate', lambda *args, **kwargs: None)
-        fetcher = DataFetcher()
+
+    # Mock ccxt.gate برای جلوگیری از اتصال واقعی
+    mock_exchange = mocker.Mock()
+    mock_exchange.load_markets = mocker.Mock()
+    mocker.patch('ccxt.gate', return_value=mock_exchange)
+
+    fetcher = DataFetcher()
     # تغییر مسیر ذخیره به tmp_path
     fetcher._file_path = lambda s, t: os.path.join(tmp_path, f"{s.replace('/', '_')}_{t}.csv")
     symbol, tf = 'BTC/USDT:USDT', '5m'
