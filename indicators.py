@@ -54,16 +54,24 @@ def add_adx(df: pd.DataFrame, period: int = 14, col_name: str = None) -> pd.Data
     prev_close = close.shift()
     up_move = high - high.shift()
     down_move = low.shift() - low
+
     plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
     minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
     tr = pd.concat([
         high - low,
         (high - prev_close).abs(),
         (low - prev_close).abs()
     ], axis=1).max(axis=1)
     atr_series = tr.ewm(alpha=1/period, adjust=False).mean()
-    plus_di = 100.0 * pd.Series(plus_dm).ewm(alpha=1/period, adjust=False).mean() / atr_series
-    minus_di = 100.0 * pd.Series(minus_dm).ewm(alpha=1/period, adjust=False).mean() / atr_series
+
+    # تبدیل به Series با ایندکس مشابه df
+    plus_dm_series = pd.Series(plus_dm, index=df.index)
+    minus_dm_series = pd.Series(minus_dm, index=df.index)
+
+    plus_di = 100.0 * plus_dm_series.ewm(alpha=1/period, adjust=False).mean() / atr_series
+    minus_di = 100.0 * minus_dm_series.ewm(alpha=1/period, adjust=False).mean() / atr_series
+
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100.0
     result[col_name] = dx.ewm(alpha=1/period, adjust=False).mean()
     return result
@@ -81,20 +89,6 @@ def add_volume_sma(df: pd.DataFrame, period: int = 20, col_name: str = None) -> 
 def detect_swings(df: pd.DataFrame, left_bars: int = 3, right_bars: int = 3) -> pd.DataFrame:
     """
     تشخیص نقاط سویینگ (Swing High و Swing Low) با تأخیر تأیید (بدون نگاه به آینده).
-
-    پارامترها:
-        df: DataFrame شامل ستون‌های 'high' و 'low'.
-        left_bars: تعداد کندل‌های سمت چپ برای بررسی قله/دره.
-        right_bars: تعداد کندل‌های سمت راست که باید برای تأیید صبر کرد.
-
-    خروجی:
-        DataFrame کپی‌شده با ستون‌های اضافی:
-        - 'swing_high': بولین، True اگر کندل یک Swing High تأییدشده باشد.
-        - 'swing_low': بولین، True اگر کندل یک Swing Low تأییدشده باشد.
-
-    نکته: یک سویینگ تنها زمانی در ایندکس i تأیید می‌شود که i + right_bars < len(df)
-    و مقادیر high/low در i با تمام کندل‌های [i-left_bars ... i+right_bars] مقایسه شوند.
-    بنابراین از کندل‌های آینده برای تأیید استفاده نمی‌کند؛ صرفاً اعلام آن به تعویق می‌افتد.
     """
     df = df.copy()
     highs = df['high'].values
