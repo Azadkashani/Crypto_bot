@@ -30,9 +30,20 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
                     as_of: pd.Timestamp = None) -> dict:
     """
     تولید سیگنال LONG/SHORT بر اساس ترتیب تاییدشده.
+
+    پارامترها:
+        df_4h: دیتافریم 4 ساعته.
+        df_1h: دیتافریم 1 ساعته.
+        df_5m: دیتافریم 5 دقیقه‌ای.
+        as_of: (اختیاری) زمان تصمیم‌گیری. اگر None باشد، آخرین کندل هر دیتافریم
+              به عنوان آخرین کندل بسته در نظر گرفته می‌شود.
+
+    خروجی:
+        dict با ساختار مشخص.
     """
 
     def _filter_closed(df: pd.DataFrame, tf: str) -> pd.DataFrame:
+        """فقط کندل‌هایی را برمی‌گرداند که در زمان as_of کاملاً بسته شده‌اند."""
         if df.empty:
             return df
         if as_of is None:
