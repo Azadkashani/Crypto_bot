@@ -1,8 +1,9 @@
-from regime import get_regime
+import pandas as pd
+from regime import get_regime, REGIME_RANGE
 
 def test_get_regime_dummy():
     """
-    تابع get_regime در حال حاضر همیشه bullish برمی‌گرداند.
+    با دیتافریم خالی، باید RANGE برگرداند.
     """
-    result = get_regime(None, '4h')
-    assert result == 'bullish'
+    result = get_regime(pd.DataFrame())
+    assert result == REGIME_RANGE
