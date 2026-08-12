@@ -69,7 +69,6 @@ def test_chronological_order_and_uniqueness(tmp_path, mocker):
     loaded = fetcher.load_data(symbol, tf)
 
     assert loaded.index.is_monotonic_increasing
-    # طول باید برابر باشد (تکراری در load_data حذف نمی‌شود)
     assert len(loaded) == len(df)
 
 
@@ -100,12 +99,17 @@ def test_incomplete_candle_removal(mocker):
         [int(incomplete_time.timestamp() * 1000), 101, 103, 100, 102, 30]
     ]
 
-    # lambda با هر ۶ پارامتر self, symbol, timeframe, since, limit, remove_incomplete_candle
-    mocker.patch.object(DataFetcher, 'fetch_ohlcv', side_effect=lambda self, symbol, timeframe, since=None, limit=None, remove_incomplete_candle=False:
-        pd.DataFrame([
-            [datetime.fromtimestamp(fake_raw[0][0]/1000, tz=timezone.utc), 100, 102, 99, 101, 50],
-            [datetime.fromtimestamp(fake_raw[1][0]/1000, tz=timezone.utc), 101, 103, 100, 102, 30]
-        ], columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']).set_index('timestamp')
+    # lambda بدون self، فقط آرگومان‌های صریح را می‌گیرد
+    mocker.patch.object(
+        DataFetcher,
+        'fetch_ohlcv',
+        side_effect=lambda symbol, timeframe, since=None, limit=None, remove_incomplete_candle=False: pd.DataFrame(
+            [
+                [datetime.fromtimestamp(fake_raw[0][0] / 1000, tz=timezone.utc), 100, 102, 99, 101, 50],
+                [datetime.fromtimestamp(fake_raw[1][0] / 1000, tz=timezone.utc), 101, 103, 100, 102, 30]
+            ],
+            columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
+        ).set_index('timestamp')
     )
 
     fetcher = DataFetcher()
