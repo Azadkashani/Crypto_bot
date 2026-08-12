@@ -64,7 +64,7 @@ class DataFetcher:
             now = datetime.now(timezone.utc)
             last_candle_end = df.index[-1] + delta
             if last_candle_end > now:
-                df = df.iloc[:-1]  # حذف آخرین کندل ناقص
+                df = df.iloc[:-1]
 
         return df
 
@@ -80,11 +80,12 @@ class DataFetcher:
         print(f"Data saved: {path}")
 
     def load_data(self, symbol: str, timeframe: str) -> pd.DataFrame | None:
-        """بارگذاری داده از فایل محلی."""
+        """بارگذاری داده از فایل محلی. همیشه به‌صورت صعودی مرتب می‌شود."""
         path = self._file_path(symbol, timeframe)
         if os.path.exists(path):
             df = pd.read_csv(path, index_col=0, parse_dates=True)
             df.index = pd.to_datetime(df.index, utc=True)
+            df.sort_index(inplace=True)  # تضمین ترتیب صعودی
             return df
         return None
 
