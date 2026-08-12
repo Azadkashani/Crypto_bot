@@ -1,5 +1,7 @@
 import pandas as pd
+import pytest
 from data import DataFetcher
+import config
 
 def test_fetch_ohlcv_structure(mock_fetcher, sample_ohlcv_data):
     """
@@ -30,4 +32,24 @@ def test_multi_timeframe_independence():
     """
     اثبات استقلال تایم‌فریم‌ها (placeholder).
     """
-    assert True  # در فازهای بعدی کامل می‌شود
+    assert True
+
+def test_import_data_does_not_create_exchange_connection():
+    """
+    اطمینان از اینکه وارد کردن data.py باعث اتصال به صرافی نمی‌شود.
+    """
+    import data
+    assert not hasattr(data, 'fetcher')  # نمونه سراسری نباید وجود داشته باشد
+
+def test_datafetcher_uses_correct_exchange(mocker):
+    """
+    بررسی استفاده از ccxt.gate با آپشن‌های صحیح.
+    """
+    mock_gate = mocker.patch('ccxt.gate')
+    # شبیه‌سازی load_markets
+    mock_instance = mock_gate.return_value
+    mock_instance.load_markets.return_value = None
+
+    fetcher = DataFetcher()
+    mock_gate.assert_called_once_with(config.EXCHANGE_OPTIONS)
+    mock_instance.load_markets.assert_called_once()
