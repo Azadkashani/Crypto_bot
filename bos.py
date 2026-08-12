@@ -62,14 +62,15 @@ def detect_bos(df: pd.DataFrame, swing_left: int = None, swing_right: int = None
 
         # BOS را قبل از به‌روزرسانی نوسان جاری بررسی می‌کنیم
         if active_direction == 'bullish' and last_swing_high_idx is not None:
+            # فقط close باید سطح را بشکند
             if df.loc[idx, 'close'] > last_swing_high_level:
                 df.loc[idx, 'bullish_bos'] = True
-                # جلوگیری از تکرار
                 last_swing_high_idx = None
                 last_swing_high_level = None
                 continue  # کندل شکست را به‌عنوان نوسان جدید ثبت نمی‌کنیم
 
         if active_direction == 'bearish' and last_swing_low_idx is not None:
+            # فقط close باید سطح را بشکند
             if df.loc[idx, 'close'] < last_swing_low_level:
                 df.loc[idx, 'bearish_bos'] = True
                 last_swing_low_idx = None
