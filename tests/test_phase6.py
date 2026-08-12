@@ -200,9 +200,13 @@ def test_wick_only_break_does_not_trigger_bos():
     # سایه بالا از 108 عبور می‌کند اما کلوز زیر 108 است
     df.loc[df.index[32], 'high'] = 109.5
     df.loc[df.index[32], 'close'] = 107.5
-    df = detect_bos(df)
-    assert df.loc[df.index[32], 'bullish_bos'] == False
-    assert df['bullish_bos'].sum() == 0
+
+    # فقط تا خود کندل 32 پردازش می‌کنیم تا کندل‌های بعدی نتوانند BOS ایجاد کنند
+    partial = df.iloc[:33]
+
+    partial = detect_bos(partial)
+    assert partial.loc[partial.index[32], 'bullish_bos'] == False
+    assert partial['bullish_bos'].sum() == 0
 
 
 def test_incomplete_candle_does_not_trigger_bos():
