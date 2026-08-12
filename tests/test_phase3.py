@@ -130,15 +130,15 @@ def test_swing_independence_from_future():
     highs = np.array([10]*30)
     highs[15] = 20  # قله واقعی در وسط
     df_full = pd.DataFrame({'high': highs, 'low': highs-1, 'open': highs-0.5, 'close': highs-0.2, 'volume': 100}, index=dates)
-    # برای هر ایندکس تا 25 (که داده کافی برای تایید وجود داشته باشد) بررسی می‌کنیم
-    for i in range(5, 25):  # از 5 شروع می‌کنیم تا left_bars=3 رعایت شود
+    # از i=15 شروع می‌کنیم تا سطر ۱۵ همیشه در partial باشد
+    for i in range(15, 25):  # 15 تا 24
         partial = df_full.iloc[:i+1].copy()
         partial = indicators.detect_swings(partial, left_bars=3, right_bars=3)
-        # اگر i >= 15+3 = 18 باشد، swing_high در اندیس 15 باید True شود
+        # اگر i >= 15+3 = 18، swing_high در اندیس ۱۵ باید True شود
         if i >= 18:
             assert partial.loc[partial.index[15], 'swing_high'] == True
         else:
-            # قبل از تایید نباید True باشد
+            # قبل از تأیید نباید True باشد
             assert partial.loc[partial.index[15], 'swing_high'] == False
 
 def test_swing_on_multiple_timeframes(ohlc_df):
