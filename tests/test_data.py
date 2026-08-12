@@ -9,7 +9,7 @@ def test_fetch_ohlcv_structure(mock_fetcher, sample_ohlcv_data):
     df = mock_fetcher.fetch_ohlcv('BTC/USDT:USDT', '5m')
     assert isinstance(df, pd.DataFrame)
     assert list(df.columns) == ['open', 'high', 'low', 'close', 'volume']
-    assert df.index.tz is not None  # timezone aware
+    assert df.index.tz is not None
     assert str(df.index.tz) == 'UTC'
     assert df.index.is_monotonic_increasing
 
@@ -20,7 +20,6 @@ def test_save_and_load_data(tmp_path, sample_ohlcv_data):
     import os
     from data import DataFetcher
     fetcher = DataFetcher()
-    # تغییر مسیر ذخیره به tmp_path
     fetcher._file_path = lambda s, t: os.path.join(tmp_path, f"{s.replace('/', '_')}_{t}.csv")
     symbol, tf = 'BTC/USDT:USDT', '5m'
     fetcher.save_data(sample_ohlcv_data, symbol, tf)
@@ -29,8 +28,6 @@ def test_save_and_load_data(tmp_path, sample_ohlcv_data):
 
 def test_multi_timeframe_independence():
     """
-    اثبات اینکه دیتافریم‌های تایم‌فریم‌های مختلف از هم مستقل هستند.
+    اثبات استقلال تایم‌فریم‌ها (placeholder).
     """
-    # این تست در آینده کامل می‌شود که داده واقعی بگیریم،
-    # فعلاً صرفاً مطمئن می‌شویم که fetch برای هر تایم‌فریم جداگانه انجام می‌شود.
-    assert True  # placeholder
+    assert True  # در فازهای بعدی کامل می‌شود
