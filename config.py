@@ -56,5 +56,11 @@ ADX_PERIOD = 14
 VOLUME_SMA_PERIOD = 20
 
 # Swing detection
-SWING_LEFT_BARS = 3      # تعداد کندل‌های قبل از قله/دره
-SWING_RIGHT_BARS = 3     # تعداد کندل‌های بعد از قله/دره برای تأیید
+SWING_LEFT_BARS = 3
+SWING_RIGHT_BARS = 3
+
+# --- پارامترهای رژیم بازار (فاز ۴) ---
+EMA_FAST = 20
+EMA_MID = 50
+EMA_SLOW = 200
+ADX_MIN_TREND = 20
