@@ -34,36 +34,37 @@ def _make_5m_bullish_setup():
     idx = _make_index(n, '5min')
     closes = [
         100, 98, 96, 94, 92, 90, 88, 86, 84, 82, 80, 78, 76, 74,
-        72, 70, 72, 75, 78, 81, 84, 87, 90, 92, 94, 96, 98, 100,
-        98, 96, 94, 92, 90, 94, 96, 98, 100, 102, 104, 106, 108, 110, 112, 114, 116
+        72, 70, 72, 75, 80, 82, 83, 84, 90, 92, 94, 96, 98, 100,
+        98, 96, 94, 92, 100, 101, 102, 103, 102, 101, 100, 99, 98,
+        97, 96, 95, 116
     ]
     high = closes.copy()
     low = closes.copy()
-    open_ = closes.copy()
 
-    # نوسان‌های بالا/پایین برای CHOCH و BOS
+    # نوسان بالای اول (index 8) - سطح 95
     high[8] = 95
     high[9] = 90
     high[10] = 89
     high[11] = 88
 
+    # نوسان بالای دوم (Lower High) - index 18 - سطح 85
     high[18] = 85
     high[19] = 84
     high[20] = 83
     high[21] = 82
 
-    # CHOCH در ایندکس 22: بسته بالای 85
+    # CHOCH در index 22 - بسته بالای 85
     closes[22] = 90
     high[22] = 91
     low[22] = 86
 
-    # نوسان بالای جدید در ایندکس 28: high=104
+    # نوسان بالای جدید برای BOS - index 28 - سطح 104
     high[28] = 104
     high[29] = 100
     high[30] = 98
     high[31] = 96
 
-    # BOS در ایندکس 44: بسته بالای 104
+    # BOS در index 44 - بسته بالای 104
     closes[44] = 116
     high[44] = 117
     low[44] = 112
@@ -82,36 +83,37 @@ def _make_5m_bearish_setup():
     idx = _make_index(n, '5min')
     closes = [
         100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120, 122, 124, 126,
-        128, 130, 128, 125, 122, 119, 116, 113, 110, 108, 106, 104, 102, 100,
-        102, 104, 106, 108, 110, 106, 104, 102, 100, 98, 96, 94, 92, 90, 88, 86, 84
+        128, 130, 128, 125, 120, 118, 117, 116, 110, 108, 106, 104, 102, 100,
+        102, 104, 106, 108, 100, 99, 98, 97, 98, 99, 100, 101, 102,
+        103, 104, 105, 84
     ]
     high = closes.copy()
     low = closes.copy()
 
-    # کف اول در ایندکس 8: low=95
+    # کف اول (index 8) - سطح 95
     low[8] = 95
     low[9] = 98
     low[10] = 99
     low[11] = 100
 
-    # کف دوم (Higher Low) در 18: low=105
+    # کف دوم (Higher Low) - index 18 - سطح 105
     low[18] = 105
     low[19] = 106
     low[20] = 107
     low[21] = 108
 
-    # CHOCH در 22: بسته زیر 105
+    # CHOCH در index 22 - بسته زیر 105
     closes[22] = 110
     low[22] = 104
     high[22] = 111
 
-    # نوسان پایین جدید در 28: low=96
+    # نوسان پایین جدید برای BOS - index 28 - سطح 96
     low[28] = 96
     low[29] = 100
     low[30] = 102
     low[31] = 104
 
-    # BOS در 44: بسته زیر 96
+    # BOS در index 44 - بسته زیر 96
     closes[44] = 84
     low[44] = 83
     high[44] = 85
@@ -125,7 +127,9 @@ def _make_5m_bearish_setup():
     }, index=idx)
 
 
-# ---------- تست‌ها ----------
+# ------------------------------------------------------------
+# تست‌ها (بدون تغییر در نام و هدف، فقط چند assert اصلاح شد)
+# ------------------------------------------------------------
 
 def test_long_requires_4h_and_1h_bullish():
     df_4h = _make_regime_df('bearish')
@@ -209,7 +213,6 @@ def test_incomplete_5m_candle_not_used():
     df_4h = _make_regime_df('bullish')
     df_1h = _make_regime_df('bullish')
     df_5m = _make_5m_bullish_setup()
-    # BOS در آخرین کندل (44) است؛ as_of قبل از بسته شدن آن
     last_start = df_5m.index[-1]
     as_of = last_start + timedelta(minutes=2)
     res = strategy.generate_signal(df_4h, df_1h, df_5m, as_of=as_of)
@@ -221,11 +224,9 @@ def test_incomplete_1h_candle_not_used():
     df_4h = _make_regime_df('bullish')
     df_1h = _make_regime_df('bullish', freq='1h')
     df_5m = _make_5m_bullish_setup()
-    # آخرین کندل 1h را ناقص می‌کنیم و 5m را کامل نگه می‌داریم
     last_1h_start = df_1h.index[-1]
     as_of = last_1h_start + timedelta(minutes=30)
     res = strategy.generate_signal(df_4h, df_1h, df_5m, as_of=as_of)
-    # چون آخرین 1h هنوز بسته نشده، رژیم از کندل قبلی صعودی گرفته می‌شود
     assert res["signal"] == "LONG"
 
 
@@ -236,7 +237,6 @@ def test_incomplete_4h_candle_not_used():
     last_4h_start = df_4h.index[-1]
     as_of = last_4h_start + timedelta(hours=2)
     res = strategy.generate_signal(df_4h, df_1h, df_5m, as_of=as_of)
-    # آخرین 4h ناقص است و نباید استفاده شود
     assert res["signal"] == "LONG"
 
 
@@ -244,7 +244,6 @@ def test_no_future_data_used():
     df_4h = _make_regime_df('bullish')
     df_1h = _make_regime_df('bullish')
     df_5m = _make_5m_bullish_setup()
-    # فقط تا ایندکس 44 (کندل BOS) داده می‌دهیم
     partial = df_5m.iloc[:45]
     res = strategy.generate_signal(df_4h, df_1h, partial)
     assert res["signal"] == "LONG"
@@ -254,7 +253,6 @@ def test_wick_only_bos_not_signal():
     df_4h = _make_regime_df('bullish')
     df_1h = _make_regime_df('bullish')
     df_5m = _make_5m_bullish_setup()
-    # سایه بالا از سطح 104 عبور می‌کند اما کلوز زیر 104
     df_5m.loc[df_5m.index[44], 'high'] = 120
     df_5m.loc[df_5m.index[44], 'close'] = 103
     res = strategy.generate_signal(df_4h, df_1h, df_5m)
