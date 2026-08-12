@@ -1,4 +1,3 @@
-import importlib
 import config
 
 def test_config_defaults():
