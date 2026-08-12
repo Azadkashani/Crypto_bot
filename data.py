@@ -1,256 +1,111 @@
-from __future__ import annotations
+"""
+ماژول مدیریت داده‌های تاریخی و زنده از Gate.io Futures.
+هر تایم‌فریم مستقل دریافت و ذخیره می‌شود.
+"""
 
-import time
-from pathlib import Path
-
-import ccxt
+import os
 import pandas as pd
+import ccxt
+from datetime import datetime, timezone
+from config import (
+    EXCHANGE_ID, EXCHANGE_OPTIONS, SYMBOL, TIMEFRAMES, DATA_DIR
+)
 
 
-EXCHANGE_ID = "gate"
-QUOTE_CURRENCY = "USDT"
+class DataFetcher:
+    """
+    دریافت‌کننده داده از صرافی و مدیریت کش محلی.
+    """
+    def __init__(self):
+        self.exchange = ccxt.gateio(EXCHANGE_OPTIONS)
+        self.exchange.load_markets()
+        # اطمینان از وجود پوشه دیتا
+        os.makedirs(DATA_DIR, exist_ok=True)
 
-SYMBOLS = [
-    "BTC/USDT:USDT",
-    "ETH/USDT:USDT",
-    "SOL/USDT:USDT",
-    "BNB/USDT:USDT",
-    "XRP/USDT:USDT",
-]
-
-TIMEFRAMES = {
-    "5m": "5m",
-    "1h": "1h",
-    "4h": "4h",
-}
-
-LIMIT = 1000
-DATA_DIR = Path("/root/Robot_trader/data")
-
-
-def create_exchange() -> ccxt.Exchange:
-    exchange_class = getattr(ccxt, EXCHANGE_ID)
-
-    exchange = exchange_class(
-        {
-            "enableRateLimit": True,
-            "options": {
-                "defaultType": "swap",
-            },
-        }
-    )
-
-    exchange.load_markets()
-    return exchange
-
-
-def get_active_linear_usdt_perpetuals(exchange: ccxt.Exchange) -> list[str]:
-    symbols = []
-
-    for symbol, market in exchange.markets.items():
-        if not market.get("active"):
-            continue
-
-        if market.get("type") != "swap":
-            continue
-
-        if not market.get("linear"):
-            continue
-
-        if market.get("quote") != QUOTE_CURRENCY:
-            continue
-
-        symbols.append(symbol)
-
-    return sorted(symbols)
-
-
-def fetch_ohlcv(
-    exchange: ccxt.Exchange,
-    symbol: str,
-    timeframe: str,
-    limit: int = LIMIT,
-) -> pd.DataFrame:
-
-    rows = exchange.fetch_ohlcv(
-        symbol,
-        timeframe=timeframe,
-        limit=limit,
-    )
-
-    if not rows:
-        raise RuntimeError(
-            f"No OHLCV data returned for {symbol} {timeframe}"
+    def fetch_ohlcv(
+        self,
+        symbol: str = SYMBOL,
+        timeframe: str = '5m',
+        since: int = None,
+        limit: int = 1000
+    ) -> pd.DataFrame:
+        """
+        دریافت داده‌های OHLCV از صرافی و بازگرداندن DataFrame تمیز.
+        """
+        raw = self.exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
+        df = pd.DataFrame(
+            raw, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
         )
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
+        df.set_index('timestamp', inplace=True)
+        df.sort_index(inplace=True)
+        # تبدیل به نوع عددی
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        return df
 
-    df = pd.DataFrame(
-        rows,
-        columns=[
-            "timestamp",
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-        ],
-    )
+    def _file_path(self, symbol: str, timeframe: str) -> str:
+        """
+        مسیر فایل CSV برای یک جفت نماد و تایم‌فریم.
+        """
+        safe_symbol = symbol.replace('/', '_').replace(':', '_')
+        return os.path.join(DATA_DIR, f"{safe_symbol}_{timeframe}.csv")
 
-    df["timestamp"] = pd.to_datetime(
-        df["timestamp"],
-        unit="ms",
-        utc=True,
-    )
+    def save_data(self, df: pd.DataFrame, symbol: str, timeframe: str):
+        """ذخیره DataFrame در فایل CSV."""
+        path = self._file_path(symbol, timeframe)
+        df.to_csv(path)
+        print(f"Data saved: {path}")
 
-    numeric_columns = [
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume",
-    ]
+    def load_data(self, symbol: str, timeframe: str) -> pd.DataFrame | None:
+        """بارگذاری داده از فایل محلی. اگر فایل وجود نداشت، None برمی‌گرداند."""
+        path = self._file_path(symbol, timeframe)
+        if os.path.exists(path):
+            df = pd.read_csv(path, index_col=0, parse_dates=True)
+            df.index = pd.to_datetime(df.index, utc=True)
+            return df
+        return None
 
-    for column in numeric_columns:
-        df[column] = pd.to_numeric(
-            df[column],
-            errors="coerce",
-        )
+    def get_historical_data(
+        self,
+        symbol: str = SYMBOL,
+        timeframe: str = '5m',
+        lookback_days: int = 30,
+        force_fetch: bool = False
+    ) -> pd.DataFrame:
+        """
+        دریافت داده تاریخی:
+        - ابتدا از فایل محلی می‌خواند.
+        - اگر کافی نبود یا force_fetch فعال بود، از صرافی دریافت و ذخیره می‌کند.
+        """
+        df = self.load_data(symbol, timeframe) if not force_fetch else None
 
-    df = (
-        df.dropna()
-        .drop_duplicates(subset=["timestamp"])
-        .sort_values("timestamp")
-        .reset_index(drop=True)
-    )
+        # تاریخ سررسید برای داده‌های موردنیاز
+        now = datetime.now(timezone.utc)
+        since_date = now - pd.Timedelta(days=lookback_days)
 
-    return df
+        if df is not None and not df.empty:
+            last_date = df.index[-1]
+            if last_date >= since_date:
+                # داده کافی است
+                return df.loc[df.index >= since_date].copy()
 
+        # دریافت داده جدید
+        since_ts = int(since_date.timestamp() * 1000)
+        new_df = self.fetch_ohlcv(symbol, timeframe, since=since_ts, limit=1000)
 
-def save_dataframe(
-    df: pd.DataFrame,
-    symbol: str,
-    timeframe: str,
-) -> Path:
+        # اگر داده محلی وجود داشت، ادغام کن
+        if df is not None:
+            combined = pd.concat([df, new_df])
+            combined = combined[~combined.index.duplicated(keep='last')]
+            combined.sort_index(inplace=True)
+        else:
+            combined = new_df
 
-    DATA_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    safe_symbol = symbol.replace("/", "_").replace(":", "_")
-
-    path = DATA_DIR / f"{safe_symbol}_{timeframe}.csv"
-
-    df.to_csv(
-        path,
-        index=False,
-    )
-
-    return path
-
-
-def main() -> None:
-
-    print("=" * 70)
-    print("Crypto AI Trader - Phase 1 Data Engine")
-    print("=" * 70)
-
-    exchange = create_exchange()
-
-    active_markets = get_active_linear_usdt_perpetuals(
-        exchange
-    )
-
-    print(
-        f"Active linear USDT perpetual markets: "
-        f"{len(active_markets)}"
-    )
-
-    for symbol in SYMBOLS:
-
-        if symbol not in exchange.markets:
-            print(
-                f"[SKIP] {symbol}: "
-                f"not found in Gate markets"
-            )
-            continue
-
-        market = exchange.markets[symbol]
-
-        if not market.get("active"):
-            print(
-                f"[SKIP] {symbol}: inactive"
-            )
-            continue
-
-        if market.get("type") != "swap":
-            print(
-                f"[SKIP] {symbol}: not a swap"
-            )
-            continue
-
-        if not market.get("linear"):
-            print(
-                f"[SKIP] {symbol}: not linear"
-            )
-            continue
-
-        if market.get("quote") != QUOTE_CURRENCY:
-            print(
-                f"[SKIP] {symbol}: quote is "
-                f"{market.get('quote')}"
-            )
-            continue
-
-        print()
-        print(f"--- {symbol} ---")
-        print(
-            f"contractSize={market.get('contractSize')} "
-            f"minAmount={market.get('limits', {}).get('amount', {}).get('min')}"
-        )
-
-        for timeframe in TIMEFRAMES.values():
-
-            try:
-
-                df = fetch_ohlcv(
-                    exchange=exchange,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                )
-
-                path = save_dataframe(
-                    df=df,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                )
-
-                first_time = df["timestamp"].iloc[0]
-                last_time = df["timestamp"].iloc[-1]
-
-                print(
-                    f"[OK] {timeframe} | "
-                    f"candles={len(df)} | "
-                    f"first={first_time} | "
-                    f"last={last_time} | "
-                    f"saved={path}"
-                )
-
-            except Exception as exc:
-
-                print(
-                    f"[ERROR] {symbol} {timeframe}: "
-                    f"{type(exc).__name__}: {exc}"
-                )
-
-            time.sleep(
-                exchange.rateLimit / 1000
-            )
-
-    print()
-    print("=" * 70)
-    print("Phase 1 Data Engine completed.")
-    print("=" * 70)
+        # ذخیره ترکیب نهایی
+        self.save_data(combined, symbol, timeframe)
+        return combined.loc[combined.index >= since_date].copy()
 
 
-if __name__ == "__main__":
-    main()
+# یک نمونه سراسری برای استفاده در سایر ماژول‌ها (اختیاری)
+fetcher = DataFetcher()
