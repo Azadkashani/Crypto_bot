@@ -73,3 +73,8 @@ TIMEFRAME_5M = TIMEFRAMES[2]
 
 # --- پارامترهای Risk Gate (فاز ۸) ---
 RISK_REWARD = 2.0
+
+# --- پارامترهای Position Sizing (فاز ۹) ---
+RISK_PER_TRADE = 0.01      # ۱٪ از سرمایه در هر معامله
+ACCOUNT_BALANCE = 1000.0   # سرمایه اولیه حساب
+LEVERAGE = 20              # اهرم (فقط برای محاسبه margin)
