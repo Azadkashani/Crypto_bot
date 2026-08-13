@@ -321,8 +321,15 @@ class GateExchange:
     # دسترسی خصوصی خواندنی
     # ------------------------------------------------------------------
     def _require_credentials(self):
-        """بررسی وجود دسترسی خصوصی."""
-        if not self.options.get("apiKey") or not self.options.get("secret"):
+        """
+        بررسی وجود کلیدهای لازم در options.
+
+        مهم:
+            فقط زمانی خطا می‌دهد که کلیدها اصلاً وجود نداشته باشند؛
+            وجود کلید با مقدار خالی (مثلاً رشتهٔ '') به‌عنوان «عدم احراز هویت
+            در لایهٔ صرافی» به ccxt واگذار می‌شود تا رفتار fail-closed داشته باشد.
+        """
+        if "apiKey" not in self.options or "secret" not in self.options:
             raise PermissionError("Private data requires API credentials")
 
     def get_balance(self) -> Dict[str, Any]:
