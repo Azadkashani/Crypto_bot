@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import math
 import decimal
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 import config
 from gate_exchange import GateExchange, MIN_24H_VOLUME_USDT
