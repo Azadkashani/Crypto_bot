@@ -112,6 +112,8 @@ def generate_signal(
             "signal": "NONE",
             "valid": False,
             "reason": "Insufficient RSI data",
+            "regime_4h": r4h,
+            "regime_1h": r1h,
             "choch": False,
             "bos": False,
             "rsi_recovery": False,
@@ -120,55 +122,111 @@ def generate_signal(
     choch_df = choch.detect_choch(df_5m_closed)
     bos_df = bos.detect_bos(df_5m_closed)
 
-    latest_5m = df_5m_closed.index[-1]
-    latest_rsi = rsi_series.iloc[-1]
-    previous_rsi = rsi_series.iloc[-2]
-
+    # ---------- تعیین توالی برای LONG یا SHORT ----------
     if direction == "LONG":
-        rsi_condition = (
-            rsi_series.min() <= config.RSI_OVERSOLD
-            and latest_rsi > previous_rsi
-        )
-        # کل تاریخچه تا لحظه تصمیم بررسی می‌شود
-        choch_condition = bool(choch_df["bullish_choch"].any())
-        bos_condition = bool(bos_df["bullish_bos"].any())
-    else:  # SHORT
-        rsi_condition = (
-            rsi_series.max() >= config.RSI_OVERBOUGHT
-            and latest_rsi < previous_rsi
-        )
-        choch_condition = bool(choch_df["bearish_choch"].any())
-        bos_condition = bool(bos_df["bearish_bos"].any())
+        is_bullish = True
+        rsi_zone_threshold = config.RSI_OVERSOLD
+    else:
+        is_bullish = False
+        rsi_zone_threshold = config.RSI_OVERBOUGHT
 
-    has_prior_choch = choch_condition
-    signal_valid = bool(
-        direction is not None
-        and rsi_condition
-        and has_prior_choch
-        and bos_condition
-    )
+    # 1) ورود RSI به ناحیهٔ مناسب
+    if is_bullish:
+        zone_mask = rsi_series <= rsi_zone_threshold
+    else:
+        zone_mask = rsi_series >= rsi_zone_threshold
 
-    if not signal_valid:
-        reason_parts = []
-        if not rsi_condition:
-            reason_parts.append("RSI condition not met")
-        if not has_prior_choch:
-            reason_parts.append("CHOCH not detected")
-        if not bos_condition:
-            reason_parts.append("BOS not detected")
-        reason = ", ".join(reason_parts) or "Conditions not met"
-
+    zone_indices = rsi_series.index[zone_mask].tolist()
+    if not zone_indices:
         return {
             "signal": "NONE",
             "valid": False,
-            "reason": reason,
+            "reason": "RSI condition not met",
             "regime_4h": r4h,
             "regime_1h": r1h,
-            "rsi_5m": round(latest_rsi, 2),
-            "rsi_recovery": bool(rsi_condition),
-            "choch": bool(has_prior_choch),
-            "bos": bool(bos_condition),
+            "rsi_5m": round(rsi_series.iloc[-1], 2),
+            "rsi_recovery": False,
+            "choch": False,
+            "bos": False,
         }
+
+    first_zone_idx = zone_indices[0]
+    first_zone_pos = rsi_series.index.get_loc(first_zone_idx)
+
+    # 2) بازیابی RSI در جهت روند اصلی
+    recovery_idx = None
+    for pos in range(first_zone_pos + 1, len(rsi_series)):
+        if is_bullish:
+            if rsi_series.iloc[pos] > rsi_series.iloc[pos - 1]:
+                recovery_idx = rsi_series.index[pos]
+                break
+        else:
+            if rsi_series.iloc[pos] < rsi_series.iloc[pos - 1]:
+                recovery_idx = rsi_series.index[pos]
+                break
+
+    if recovery_idx is None:
+        return {
+            "signal": "NONE",
+            "valid": False,
+            "reason": "RSI recovery not detected",
+            "regime_4h": r4h,
+            "regime_1h": r1h,
+            "rsi_5m": round(rsi_series.iloc[-1], 2),
+            "rsi_recovery": False,
+            "choch": False,
+            "bos": False,
+        }
+
+    # 3) CHOCH هم‌جهت بعد از recovery
+    if is_bullish:
+        choch_flags = choch_df["bullish_choch"]
+        bos_flags = bos_df["bullish_bos"]
+    else:
+        choch_flags = choch_df["bearish_choch"]
+        bos_flags = bos_df["bearish_bos"]
+
+    choch_candidates = choch_flags.index[
+        choch_flags & (choch_flags.index >= recovery_idx)
+    ].tolist()
+
+    if not choch_candidates:
+        return {
+            "signal": "NONE",
+            "valid": False,
+            "reason": "CHOCH not detected",
+            "regime_4h": r4h,
+            "regime_1h": r1h,
+            "rsi_5m": round(rsi_series.iloc[-1], 2),
+            "rsi_recovery": True,
+            "choch": False,
+            "bos": False,
+        }
+
+    choch_idx = choch_candidates[0]
+
+    # 4) BOS هم‌جهت بعد از CHOCH
+    bos_candidates = bos_flags.index[
+        bos_flags & (bos_flags.index >= choch_idx)
+    ].tolist()
+
+    if not bos_candidates:
+        return {
+            "signal": "NONE",
+            "valid": False,
+            "reason": "BOS not detected",
+            "regime_4h": r4h,
+            "regime_1h": r1h,
+            "rsi_5m": round(rsi_series.iloc[-1], 2),
+            "rsi_recovery": True,
+            "choch": True,
+            "bos": False,
+        }
+
+    bos_idx = bos_candidates[0]
+
+    latest_5m = df_5m_closed.index[-1]
+    latest_rsi = rsi_series.iloc[-1]
 
     return {
         "signal": direction,
@@ -178,8 +236,8 @@ def generate_signal(
         "regime_4h": r4h,
         "regime_1h": r1h,
         "rsi_5m": round(latest_rsi, 2),
-        "rsi_recovery": bool(rsi_condition),
-        "choch": bool(has_prior_choch),
-        "bos": bool(bos_condition),
+        "rsi_recovery": True,
+        "choch": True,
+        "bos": True,
         "timestamp": latest_5m,
     }
