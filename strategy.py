@@ -5,6 +5,7 @@
 
 import pandas as pd
 from datetime import timedelta
+from typing import Optional, Dict, Any
 import indicators
 import regime
 import choch
@@ -15,7 +16,6 @@ from position_sizing import calculate_position_size
 
 
 def _timeframe_to_timedelta(tf: str) -> timedelta:
-    """تبدیل رشته تایم‌فریم به timedelta."""
     unit = tf[-1]
     value = int(tf[:-1])
     if unit == 'm':
@@ -32,38 +32,31 @@ def generate_signal(
     df_4h: pd.DataFrame,
     df_1h: pd.DataFrame,
     df_5m: pd.DataFrame,
-    as_of: pd.Timestamp = None,
-    account_balance: float = None,
-) -> dict:
+    as_of: Optional[pd.Timestamp] = None,
+    account_balance: Optional[float] = None,
+    symbol: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    تولید سیگنال LONG/SHORT بر اساس توالی تأییدشده، اعتبارسنجی ریسک و حجم معامله.
+    تولید سیگنال LONG/SHORT بر اساس توالی تأییدشده.
 
     پارامترها:
-        df_4h: دیتافریم ۴ ساعته.
-        df_1h: دیتافریم ۱ ساعته.
-        df_5m: دیتافریم ۵ دقیقه‌ای.
-        as_of: (اختیاری) زمان تصمیم‌گیری. اگر None باشد،
-              هر تایم‌فریم به‌صورت مستقل با آخرین دادهٔ بسته‌شده در نظر گرفته می‌شود.
-        account_balance: (اختیاری) بالانس حساب برای Position Sizing.
-                        اگر None باشد از config.ACCOUNT_BALANCE استفاده می‌شود.
-
-    خروجی:
-        dict شامل signal, valid, reason و اطلاعات کامل ریسک و حجم.
+        df_4h, df_1h, df_5m: دیتافریم‌های مستقل.
+        as_of: زمان تصمیم‌گیری (اختیاری).
+        account_balance: بالانس حساب برای Position Sizing (اختیاری).
+        symbol: نماد معاملاتی (اختیاری، فقط برای metadata).
     """
-
     if account_balance is None:
         account_balance = config.ACCOUNT_BALANCE
 
     def _filter_closed(df: pd.DataFrame, tf: str) -> pd.DataFrame:
-        """فقط کندل‌هایی را برمی‌گرداند که در زمان as_of کاملاً بسته شده‌اند."""
         if df.empty:
+            return df
+        if as_of is None:
             return df
         delta = _timeframe_to_timedelta(tf)
         mask = df.index + delta <= as_of
         return df.loc[mask]
 
-    # اگر as_of مشخص نباشد، داده‌های ورودی را به‌عنوان کندل‌های بسته‌شده فرض می‌کنیم
-    # و هر تایم‌فریم را مستقل از تایم‌فریم‌های دیگر استفاده می‌کنیم.
     if as_of is None:
         df_4h_closed = df_4h.copy()
         df_1h_closed = df_1h.copy()
@@ -74,14 +67,7 @@ def generate_signal(
         df_5m_closed = _filter_closed(df_5m, config.TIMEFRAME_5M)
 
     if df_5m_closed.empty:
-        return {
-            "signal": "NONE",
-            "valid": False,
-            "reason": "Insufficient 5m data",
-            "choch": False,
-            "bos": False,
-            "rsi_recovery": False,
-        }
+        return {"signal": "NONE", "valid": False, "reason": "Insufficient 5m data", "choch": False, "bos": False, "rsi_recovery": False}
 
     r4h = regime.get_regime(df_4h_closed) if not df_4h_closed.empty else regime.REGIME_RANGE
     r1h = regime.get_regime(df_1h_closed) if not df_1h_closed.empty else regime.REGIME_RANGE
@@ -91,37 +77,17 @@ def generate_signal(
     elif r4h == regime.REGIME_BEARISH and r1h == regime.REGIME_BEARISH:
         direction = "SHORT"
     else:
-        return {
-            "signal": "NONE",
-            "valid": False,
-            "reason": "4H and 1H regimes are not aligned",
-            "regime_4h": r4h,
-            "regime_1h": r1h,
-            "choch": False,
-            "bos": False,
-            "rsi_recovery": False,
-        }
+        return {"signal": "NONE", "valid": False, "reason": "4H and 1H regimes are not aligned", "regime_4h": r4h, "regime_1h": r1h, "choch": False, "bos": False, "rsi_recovery": False}
 
     rsi_df = indicators.add_rsi(df_5m_closed, period=config.RSI_PERIOD)
     rsi_col = f"rsi_{config.RSI_PERIOD}"
     rsi_series = rsi_df[rsi_col].dropna()
-
     if len(rsi_series) < 2:
-        return {
-            "signal": "NONE",
-            "valid": False,
-            "reason": "Insufficient RSI data",
-            "regime_4h": r4h,
-            "regime_1h": r1h,
-            "choch": False,
-            "bos": False,
-            "rsi_recovery": False,
-        }
+        return {"signal": "NONE", "valid": False, "reason": "Insufficient RSI data", "regime_4h": r4h, "regime_1h": r1h, "choch": False, "bos": False, "rsi_recovery": False}
 
     choch_df = choch.detect_choch(df_5m_closed)
     bos_df = bos.detect_bos(df_5m_closed)
 
-    # ---------- تعیین توالی برای LONG یا SHORT ----------
     if direction == "LONG":
         is_bullish = True
         rsi_zone_threshold = config.RSI_OVERSOLD
@@ -129,30 +95,14 @@ def generate_signal(
         is_bullish = False
         rsi_zone_threshold = config.RSI_OVERBOUGHT
 
-    # 1) ورود RSI به ناحیهٔ مناسب
-    if is_bullish:
-        zone_mask = rsi_series <= rsi_zone_threshold
-    else:
-        zone_mask = rsi_series >= rsi_zone_threshold
-
+    zone_mask = rsi_series <= rsi_zone_threshold if is_bullish else rsi_series >= rsi_zone_threshold
     zone_indices = rsi_series.index[zone_mask].tolist()
     if not zone_indices:
-        return {
-            "signal": "NONE",
-            "valid": False,
-            "reason": "RSI condition not met",
-            "regime_4h": r4h,
-            "regime_1h": r1h,
-            "rsi_5m": round(rsi_series.iloc[-1], 2),
-            "rsi_recovery": False,
-            "choch": False,
-            "bos": False,
-        }
+        return {"signal": "NONE", "valid": False, "reason": "RSI condition not met", "regime_4h": r4h, "regime_1h": r1h, "rsi_5m": round(rsi_series.iloc[-1], 2), "rsi_recovery": False, "choch": False, "bos": False}
 
     first_zone_idx = zone_indices[0]
     first_zone_pos = rsi_series.index.get_loc(first_zone_idx)
 
-    # 2) بازیابی RSI در جهت روند اصلی
     recovery_idx = None
     for pos in range(first_zone_pos + 1, len(rsi_series)):
         if is_bullish:
@@ -165,82 +115,26 @@ def generate_signal(
                 break
 
     if recovery_idx is None:
-        return {
-            "signal": "NONE",
-            "valid": False,
-            "reason": "RSI recovery not detected",
-            "regime_4h": r4h,
-            "regime_1h": r1h,
-            "rsi_5m": round(rsi_series.iloc[-1], 2),
-            "rsi_recovery": False,
-            "choch": False,
-            "bos": False,
-        }
+        return {"signal": "NONE", "valid": False, "reason": "RSI recovery not detected", "regime_4h": r4h, "regime_1h": r1h, "rsi_5m": round(rsi_series.iloc[-1], 2), "rsi_recovery": False, "choch": False, "bos": False}
 
-    # 3) CHOCH هم‌جهت بعد از recovery
-    if is_bullish:
-        choch_flags = choch_df["bullish_choch"]
-        bos_flags = bos_df["bullish_bos"]
-    else:
-        choch_flags = choch_df["bearish_choch"]
-        bos_flags = bos_df["bearish_bos"]
+    choch_flags = choch_df["bullish_choch"] if is_bullish else choch_df["bearish_choch"]
+    bos_flags = bos_df["bullish_bos"] if is_bullish else bos_df["bearish_bos"]
 
-    choch_candidates = choch_flags.index[
-        choch_flags & (choch_flags.index >= recovery_idx)
-    ].tolist()
-
+    choch_candidates = choch_flags.index[choch_flags & (choch_flags.index >= recovery_idx)].tolist()
     if not choch_candidates:
-        return {
-            "signal": "NONE",
-            "valid": False,
-            "reason": "CHOCH not detected",
-            "regime_4h": r4h,
-            "regime_1h": r1h,
-            "rsi_5m": round(rsi_series.iloc[-1], 2),
-            "rsi_recovery": True,
-            "choch": False,
-            "bos": False,
-        }
+        return {"signal": "NONE", "valid": False, "reason": "CHOCH not detected", "regime_4h": r4h, "regime_1h": r1h, "rsi_5m": round(rsi_series.iloc[-1], 2), "rsi_recovery": True, "choch": False, "bos": False}
 
     choch_idx = choch_candidates[0]
-
-    # 4) BOS هم‌جهت بعد از CHOCH
-    bos_candidates = bos_flags.index[
-        bos_flags & (bos_flags.index >= choch_idx)
-    ].tolist()
-
+    bos_candidates = bos_flags.index[bos_flags & (bos_flags.index >= choch_idx)].tolist()
     if not bos_candidates:
-        return {
-            "signal": "NONE",
-            "valid": False,
-            "reason": "BOS not detected",
-            "regime_4h": r4h,
-            "regime_1h": r1h,
-            "rsi_5m": round(rsi_series.iloc[-1], 2),
-            "rsi_recovery": True,
-            "choch": True,
-            "bos": False,
-        }
+        return {"signal": "NONE", "valid": False, "reason": "BOS not detected", "regime_4h": r4h, "regime_1h": r1h, "rsi_5m": round(rsi_series.iloc[-1], 2), "rsi_recovery": True, "choch": True, "bos": False}
 
     bos_idx = bos_candidates[0]
 
-    # 5) Risk Gate
     risk_result = evaluate_risk(bos_df, bos_idx, direction, rr=config.RISK_REWARD)
-
     if not risk_result["valid"]:
-        return {
-            "signal": "NONE",
-            "valid": False,
-            "reason": f"Risk gate: {risk_result['reason']}",
-            "regime_4h": r4h,
-            "regime_1h": r1h,
-            "rsi_5m": round(rsi_series.iloc[-1], 2),
-            "rsi_recovery": True,
-            "choch": True,
-            "bos": True,
-        }
+        return {"signal": "NONE", "valid": False, "reason": f"Risk gate: {risk_result['reason']}", "regime_4h": r4h, "regime_1h": r1h, "rsi_5m": round(rsi_series.iloc[-1], 2), "rsi_recovery": True, "choch": True, "bos": True}
 
-    # 6) Position Sizing
     position_result = calculate_position_size(
         account_balance=account_balance,
         risk_per_trade=config.RISK_PER_TRADE,
@@ -248,19 +142,8 @@ def generate_signal(
         stop_loss=risk_result["stop_loss"],
         leverage=config.LEVERAGE,
     )
-
     if not position_result["valid"]:
-        return {
-            "signal": "NONE",
-            "valid": False,
-            "reason": f"Position sizing: {position_result['reason']}",
-            "regime_4h": r4h,
-            "regime_1h": r1h,
-            "rsi_5m": round(rsi_series.iloc[-1], 2),
-            "rsi_recovery": True,
-            "choch": True,
-            "bos": True,
-        }
+        return {"signal": "NONE", "valid": False, "reason": f"Position sizing: {position_result['reason']}", "regime_4h": r4h, "regime_1h": r1h, "rsi_5m": round(rsi_series.iloc[-1], 2), "rsi_recovery": True, "choch": True, "bos": True}
 
     latest_5m = df_5m_closed.index[-1]
     latest_rsi = rsi_series.iloc[-1]
@@ -287,4 +170,5 @@ def generate_signal(
         "margin_required": position_result["margin_required"],
         "leverage": position_result["leverage"],
         "timestamp": latest_5m,
+        "symbol": symbol,
     }
