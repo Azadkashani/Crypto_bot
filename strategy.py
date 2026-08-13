@@ -182,3 +182,4 @@ def generate_signal(
         "bos": bool(bos_condition),
         "timestamp": latest_5m,
     }
+    
