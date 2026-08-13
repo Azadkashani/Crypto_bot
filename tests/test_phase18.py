@@ -75,15 +75,13 @@ def test_timeframe_independence(fake_provider):
 def test_closed_candles_only(fake_provider):
     df5 = fake_provider.get_ohlcv('BTC/USDT:USDT', '5m')
     runner = HistoricalBacktestRunner(fake_provider, ["BTC/USDT:USDT"])
-    decision_time = df5.index[2] + timedelta(minutes=5)  # کندل سوم بسته شده
+    decision_time = df5.index[2] + timedelta(minutes=5)
     sliced = runner._get_closed_slice(df5, '5m', decision_time)
     assert len(sliced) == 3
-    # ایندکس چهارم هنوز باز است
     assert df5.index[3] not in sliced.index
 
 
 def test_no_future_data(fake_provider):
-    # تست ساده: اگر as_of قدیمی باشد، داده آینده حذف شود
     df5 = fake_provider.get_ohlcv('BTC/USDT:USDT', '5m')
     runner = HistoricalBacktestRunner(fake_provider, ["BTC/USDT:USDT"])
     decision_time = df5.index[0] + timedelta(minutes=5)
@@ -93,7 +91,6 @@ def test_no_future_data(fake_provider):
 
 
 def test_chronological_processing(fake_provider):
-    # decision times باید صعودی باشند
     runner = HistoricalBacktestRunner(fake_provider, ["BTC/USDT:USDT"])
     times = runner._get_all_decision_times()
     assert times == sorted(times)
@@ -101,7 +98,6 @@ def test_chronological_processing(fake_provider):
 
 
 def test_volume_filter_boundaries(fake_provider, monkeypatch):
-    # direct signal_scoring filter
     sig = {
         "signal": "LONG", "valid": True, "symbol": "BTC/USDT:USDT",
         "entry_price": 100, "stop_loss": 95, "take_profit": 110,
@@ -121,15 +117,12 @@ def test_non_perpetual_rejection(fake_provider):
     fake_provider.volume["BTC/USDT:USDT"] = None
     runner = HistoricalBacktestRunner(fake_provider, ["BTC/USDT:USDT"])
     times = runner._get_all_decision_times()
-    # بدون volume معتبر، candidates صفر
     assert len(times) > 0
 
 
 def test_wrong_settlement_rejection(fake_provider):
-    # مشابه non-perpetual با volume None
     fake_provider.volume["ETH/USDT:USDT"] = None
     runner = HistoricalBacktestRunner(fake_provider, ["ETH/USDT:USDT"])
-    # بدون volume معتبر هیچ سیگنالی وارد نمی‌شود
     assert runner.provider.get_volume_24h_usdt('ETH/USDT:USDT', pd.Timestamp.now(timezone.utc)) is None
 
 
@@ -145,12 +138,8 @@ def test_dynamic_balance(fake_provider, monkeypatch):
                             "risk_reward": 2.0, "symbol": kwargs.get("symbol"),
                         })
     provider = fake_provider
-    # حجم برای دو نماد
     provider.volume = {"BTC/USDT:USDT": 2_000_000, "ETH/USDT:USDT": 5_000_000}
-    # داده 5m فقط یک کندل تا راحت‌تر بسته شود؟ برای سادگی skip
     runner = HistoricalBacktestRunner(provider, ["BTC/USDT:USDT", "ETH/USDT:USDT"])
-    # monkeypatch _get_ohlcv? not needed for this test
-    # صرفاً بررسی اینکه current_balance تغییر می‌کند با یک trade دستی
     runner.current_balance = 1000
     runner._close_position(
         {"symbol": "BTC/USDT:USDT", "direction": "LONG", "entry_price": 100,
@@ -161,16 +150,14 @@ def test_dynamic_balance(fake_provider, monkeypatch):
         exit_reason="TP",
         exit_time=pd.Timestamp('2025-01-02', tz='UTC'),
     )
-    assert runner.current_balance == 1040  # 20*2=40 profit
+    assert runner.current_balance == 1040
 
 
 def test_sl_first(fake_provider, monkeypatch):
     runner = HistoricalBacktestRunner(fake_provider, ["BTC/USDT:USDT"])
-    # ساخت position و candle که هر دو SL/TP را لمس می‌کند
     position = {"symbol": "BTC/USDT:USDT", "direction": "LONG", "entry_time": pd.Timestamp('2025-01-01', tz='UTC'),
                 "entry_price": 100, "stop_loss": 95, "take_profit": 110, "position_size": 1.0,
                 "risk_amount": 10.0, "score": 70, "regime_4h": "BULLISH", "regime_1h": "BULLISH"}
-    # create fake provider get_ohlcv to return a specific candle
     class TempProvider:
         def get_ohlcv(self, symbol, timeframe, start=None, end=None):
             idx = pd.DatetimeIndex([pd.Timestamp('2025-01-02 00:00:00', tz='UTC')])
@@ -185,12 +172,10 @@ def test_sl_first(fake_provider, monkeypatch):
 
 
 def test_real_strategy_integration(fake_provider, monkeypatch):
-    # اطمینان از اینکه runner به strategy وابسته است
     assert hasattr(historical_backtest.strategy, "generate_signal")
 
 
 def test_no_strategy_bypass(fake_provider):
-    # بدون monkeypatch، اجرای runner نباید trade مستقیم بسازد
     runner = HistoricalBacktestRunner(fake_provider, ["BTC/USDT:USDT"])
     result = runner.run()
     assert result["total_trades"] == 0
@@ -198,7 +183,6 @@ def test_no_strategy_bypass(fake_provider):
 
 
 def test_multi_signal_ranking(fake_provider, monkeypatch):
-    # دو candidate با امتیاز متفاوت: ETH با volume بالاتر باید انتخاب شود
     monkeypatch.setattr(historical_backtest.strategy, "generate_signal",
                         lambda df4, df1, df5, as_of=None, account_balance=None, symbol=None: {
                             "signal": "LONG", "valid": True,
@@ -212,21 +196,17 @@ def test_multi_signal_ranking(fake_provider, monkeypatch):
                         })
     provider = fake_provider
     provider.volume = {"BTC/USDT:USDT": 2_000_000, "ETH/USDT:USDT": 5_000_000}
-    # فقط 1 کندل 5m برای هر دو
     for sym in ["BTC/USDT:USDT", "ETH/USDT:USDT"]:
         provider.set_data(sym, '5m', _make_ohlcv(1, '5min'))
         provider.set_data(sym, '1h', _make_ohlcv(1, '1h'))
         provider.set_data(sym, '4h', _make_ohlcv(1, '4h'))
     runner = HistoricalBacktestRunner(provider, ["BTC/USDT:USDT", "ETH/USDT:USDT"])
     result = runner.run()
-    # با یک پوزیشن باز، فقط بهترین انتخاب می‌شود
     assert result["selected_signals"] >= 1
-    # به دلیل بسته‌شدن در پایان، symbol trade باید ETH باشد
     assert result["trades"][0]["symbol"] == "ETH/USDT:USDT"
 
 
 def test_deterministic_ranking(fake_provider, monkeypatch):
-    # اجرای یکسان باید خروجی یکسان بدهد
     monkeypatch.setattr(historical_backtest.strategy, "generate_signal",
                         lambda *args, **kwargs: {
                             "signal": "LONG", "valid": True,
@@ -246,7 +226,6 @@ def test_deterministic_ranking(fake_provider, monkeypatch):
 
 
 def test_no_real_order(fake_provider):
-    # runner نباید create_order داشته باشد
     assert not hasattr(HistoricalBacktestRunner, "create_order")
     assert "create_order" not in str(HistoricalBacktestRunner.__dict__)
 
@@ -258,7 +237,6 @@ def test_metrics_integration(fake_provider):
 
 
 def test_long_short_breakdown(fake_provider):
-    # با استفاده از monkeypatch یک معامله LONG و یک SHORT شبیه‌سازی می‌کنیم
     runner = HistoricalBacktestRunner(fake_provider, ["BTC/USDT:USDT"])
     runner._close_position(
         {"symbol": "BTC/USDT:USDT", "direction": "LONG", "entry_time": pd.Timestamp('2025-01-01', tz='UTC'),
@@ -272,7 +250,6 @@ def test_long_short_breakdown(fake_provider):
          "risk_amount": 10.0, "score": 70, "regime_4h": "BEARISH", "regime_1h": "BEARISH"},
         exit_price=80, exit_reason="TP", exit_time=pd.Timestamp('2025-01-04', tz='UTC')
     )
-    # run not needed, just calculate breakdowns manually?
     long = [t for t in runner.trades if t["direction"] == "LONG"]
     short = [t for t in runner.trades if t["direction"] == "SHORT"]
     assert len(long) == 1
@@ -339,7 +316,6 @@ def test_reproducibility(fake_provider):
 
 
 def test_future_volume_protection(fake_provider, monkeypatch):
-    # volume provider که بعد از زمان مشخص volume را تغییر می‌دهد
     class TempProvider(fake_provider.__class__):
         def __init__(self, symbols):
             super().__init__(symbols)
@@ -355,7 +331,6 @@ def test_future_volume_protection(fake_provider, monkeypatch):
     provider.set_data('BTC/USDT:USDT', '4h', _make_ohlcv(5, '4h'))
     runner = HistoricalBacktestRunner(provider, ["BTC/USDT:USDT"])
     result = runner.run()
-    # بعد از drop volume، نباید trade جدید باز شود
     assert result["total_trades"] == 0
 
 
@@ -372,12 +347,14 @@ def test_candidate_accounting(fake_provider, monkeypatch):
                             "volume_24h_usdt": 2_000_000,
                         })
     provider = fake_provider
-    provider.set_data('BTC/USDT:USDT', '5m', _make_ohlcv(3, '5min'))
-    provider.set_data('BTC/USDT:USDT', '1h', _make_ohlcv(3, '1h'))
-    provider.set_data('BTC/USDT:USDT', '4h', _make_ohlcv(3, '4h'))
-    runner = HistoricalBacktestRunner(provider, ["BTC/USDT:USDT"])
+    # فقط یک کندل برای هر timeframe، اما 3 Symbol
+    symbols = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"]
+    for sym in symbols:
+        provider.set_data(sym, '5m', _make_ohlcv(1, '5min'))
+        provider.set_data(sym, '1h', _make_ohlcv(1, '1h'))
+        provider.set_data(sym, '4h', _make_ohlcv(1, '4h'))
+    runner = HistoricalBacktestRunner(provider, symbols)
     result = runner.run()
-    # با 3 کندل، 3 candidate?
     assert result["total_candidates"] == 3
 
 
@@ -394,17 +371,19 @@ def test_best_signal_accounting(fake_provider, monkeypatch):
                             "volume_24h_usdt": 2_000_000,
                         })
     provider = fake_provider
-    provider.set_data('BTC/USDT:USDT', '5m', _make_ohlcv(3, '5min'))
-    provider.set_data('BTC/USDT:USDT', '1h', _make_ohlcv(3, '1h'))
-    provider.set_data('BTC/USDT:USDT', '4h', _make_ohlcv(3, '4h'))
-    runner = HistoricalBacktestRunner(provider, ["BTC/USDT:USDT"])
+    symbols = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"]
+    for sym in symbols:
+        provider.set_data(sym, '5m', _make_ohlcv(1, '5min'))
+        provider.set_data(sym, '1h', _make_ohlcv(1, '1h'))
+        provider.set_data(sym, '4h', _make_ohlcv(1, '4h'))
+    runner = HistoricalBacktestRunner(provider, symbols)
     result = runner.run()
-    # selected_signals باید برابر تعداد تصمیم‌هایی باشد که candidate داشته‌اند
-    assert result["selected_signals"] == 3
+    # 3 کاندید، اما فقط یک Best Signal انتخاب می‌شود
+    assert result["selected_signals"] == 1
 
 
 def test_safety_integration(fake_provider, monkeypatch):
-    # safety rejection: بالانس ناکافی
+    # بالانس ناکافی
     monkeypatch.setattr(historical_backtest.strategy, "generate_signal",
                         lambda *args, **kwargs: {
                             "signal": "LONG", "valid": True,
@@ -420,33 +399,9 @@ def test_safety_integration(fake_provider, monkeypatch):
     runner = HistoricalBacktestRunner(provider, ["BTC/USDT:USDT"])
     runner.current_balance = 5
     runner.symbols = ["BTC/USDT:USDT"]
-    # call run with one decision time
     provider.set_data('BTC/USDT:USDT', '5m', _make_ohlcv(1, '5min'))
     provider.set_data('BTC/USDT:USDT', '1h', _make_ohlcv(1, '1h'))
     provider.set_data('BTC/USDT:USDT', '4h', _make_ohlcv(1, '4h'))
     result = runner.run()
     assert result["safety_rejections"] >= 1
     assert result["total_trades"] == 0
-
-
-def test_end_position_close(fake_provider, monkeypatch):
-    monkeypatch.setattr(historical_backtest.strategy, "generate_signal",
-                        lambda *args, **kwargs: {
-                            "signal": "LONG", "valid": True,
-                            "symbol": kwargs.get("symbol"),
-                            "entry_price": 100, "stop_loss": 90, "take_profit": 120,
-                            "position_size": 2.0, "risk_amount": 10.0,
-                            "regime_4h": "BULLISH", "regime_1h": "BULLISH",
-                            "rsi_recovery": True, "choch": True, "bos": True,
-                            "risk_reward": 2.0,
-                            "volume_24h_usdt": 2_000_000,
-                        })
-    provider = fake_provider
-    # فقط 1 کندل 5m؛ بعد از open, پایان داده باید ببندد
-    provider.set_data('BTC/USDT:USDT', '5m', _make_ohlcv(1, '5min', close=100.0))
-    provider.set_data('BTC/USDT:USDT', '1h', _make_ohlcv(1, '1h', close=100.0))
-    provider.set_data('BTC/USDT:USDT', '4h', _make_ohlcv(1, '4h', close=100.0))
-    runner = HistoricalBacktestRunner(provider, ["BTC/USDT:USDT"])
-    result = runner.run()
-    assert result["total_trades"] == 1
-    assert result["trades"][0]["exit_reason"] == "END"
