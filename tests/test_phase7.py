@@ -14,7 +14,7 @@ def _make_index(n, freq='5min', start='2025-01-01'):
     return pd.date_range(start=start, periods=n, freq=freq, tz='UTC')
 
 
-def _make_regime_df(direction, n=200, freq='4h', start='2024-01-01'):
+def _make_regime_df(direction, n=200, freq='4h', start='2025-01-01'):
     idx = _make_index(n, freq=freq, start=start)
     if direction == 'bullish':
         close = 100 + np.arange(n) * 1.0
