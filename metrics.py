@@ -8,7 +8,7 @@ API عمومی:
     calculate_metrics(trades, equity_curve, initial_balance=None) -> dict
 """
 
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -104,7 +104,6 @@ def calculate_metrics(
 
         else:  # pnl == 0
             breakeven_trades += 1
-            # تساوی صفر باعث ریست شدن هر دو استریک می‌شود
             current_consecutive_wins = 0
             current_consecutive_losses = 0
 
@@ -143,8 +142,6 @@ def calculate_metrics(
         profit_factor = float('inf')
 
     # ---------- سود خالص ----------
-    # اگر سرمایه اولیه داده شده باشد، از تفاوت final و initial استفاده می‌کنیم.
-    # در غیر این صورت مجموع pnl معاملات.
     if initial_balance is not None:
         initial_balance = float(initial_balance)
         if equity_curve:
@@ -153,7 +150,6 @@ def calculate_metrics(
             final_balance = initial_balance + total_pnl
         net_profit = final_balance - initial_balance
     else:
-        # بدون سرمایه اولیه، خالص سود را مجموع pnl می‌گیریم.
         net_profit = total_pnl
         if equity_curve:
             final_balance = _safe_float(equity_curve[-1].get("balance"), total_pnl)
@@ -170,8 +166,6 @@ def calculate_metrics(
         peak_balance = max(balances)
         final_balance_from_curve = balances[-1]
 
-        # اگر سرمایه اولیه داده نشده بود و final_balance را از منحنی نگرفته بودیم،
-        # اینجا final_balance را از منحنی می‌گیریم.
         if initial_balance is None:
             final_balance = final_balance_from_curve
             net_profit = final_balance_from_curve - balances[0] if balances else total_pnl
@@ -191,13 +185,12 @@ def calculate_metrics(
                 # اگر peak صفر باشد، دراودان صفر در نظر گرفته می‌شود
                 if abs_dd > 0:
                     max_drawdown = float('inf')
-        # جلوگیری از inf به‌دلیل peak صفر
         if max_drawdown == float('inf'):
             max_drawdown = 0.0
     else:
         # بدون منحنی سرمایه، دراودان صفر است
         peak_balance = float(initial_balance) if initial_balance is not None else 0.0
-        final_balance = peak_balance
+        final_balance = peak_balance + total_pnl if initial_balance is not None else total_pnl
         max_drawdown = 0.0
         max_abs_drawdown = 0.0
 
@@ -212,7 +205,6 @@ def calculate_metrics(
         else:
             recovery_factor = 0.0
 
-    # ---------- خروجی ----------
     return {
         "total_trades": total_trades,
         "winning_trades": winning_trades,
