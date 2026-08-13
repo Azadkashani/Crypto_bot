@@ -1,4 +1,3 @@
-# config.py
 """
 پیکربندی پروژه Crypto AI Trader V2.
 تمامی مقادیر باید از طریق این فایل مدیریت شوند.
@@ -23,7 +22,7 @@ SYMBOL = 'BTC/USDT:USDT'
 # تایم‌فریم‌ها
 TIMEFRAMES = ['4h', '1h', '5m']
 
-# آستانه‌های RSI (برای آینده)
+# آستانه‌های RSI
 RSI_OVERSOLD = 30
 RSI_OVERBOUGHT = 70
 RSI_PERIOD = 14
@@ -39,24 +38,14 @@ DATA_DIR = 'data/'
 UTC = True
 
 # --- پارامترهای اندیکاتورهای فاز ۳ ---
-
-# EMA
 EMA_SHORT = 9
 EMA_LONG = 21
 
-# RSI
 RSI_PERIOD = 14
-
-# ATR
 ATR_PERIOD = 14
-
-# ADX
 ADX_PERIOD = 14
-
-# Volume SMA
 VOLUME_SMA_PERIOD = 20
 
-# Swing detection
 SWING_LEFT_BARS = 3
 SWING_RIGHT_BARS = 3
 
@@ -75,6 +64,14 @@ TIMEFRAME_5M = TIMEFRAMES[2]
 RISK_REWARD = 2.0
 
 # --- پارامترهای Position Sizing (فاز ۹) ---
-RISK_PER_TRADE = 0.01      # ۱٪ از سرمایه در هر معامله
-ACCOUNT_BALANCE = 1000.0   # سرمایه اولیه حساب
-LEVERAGE = 20              # اهرم (فقط برای محاسبه margin)
+RISK_PER_TRADE = 0.01
+ACCOUNT_BALANCE = 1000.0
+LEVERAGE = 20
+
+# --- پارامترهای Signal Scoring (فاز ۱۶) ---
+REGIME_SCORE_WEIGHT = 25
+RSI_SCORE_WEIGHT = 20
+CHOCH_SCORE_WEIGHT = 20
+BOS_SCORE_WEIGHT = 20
+VOLUME_SCORE_WEIGHT = 10
+RR_SCORE_WEIGHT = 5
