@@ -50,7 +50,7 @@ class GateExchange:
 
     def __init__(self, exchange_id: Optional[str] = None, options: Optional[dict] = None):
         """
-        سازنده. آداپتور یک نمونه ccxt.gate می‌سازد اما بازارها را بارگذاری نمی‌کند.
+        سازنده. آداپتور یک نمونه ccxt.gate می‌سازد و بازارها را بارگذاری می‌کند.
 
         پارامترها:
             exchange_id: شناسه صرافی. اگر None باشد از config.EXCHANGE_ID استفاده می‌شود.
@@ -60,6 +60,12 @@ class GateExchange:
         self.options = options or config.EXCHANGE_OPTIONS.copy()
         self.exchange = ccxt.gate(self.options)
         self.markets: Dict[str, Any] = {}
+        # بارگذاری خودکار بازارها برای جلوگیری از KeyError در مصرف‌کنندگان
+        try:
+            self.load_markets()
+        except Exception:
+            # در صورت خطا، بازارها خالی می‌مانند؛ مصرف‌کننده باید خطای مناسب بدهد
+            self.markets = {}
 
     # ------------------------------------------------------------------
     # بارگذاری بازار
@@ -188,7 +194,6 @@ class GateExchange:
         if not raw:
             return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
-        # بررسی تعداد ستون‌ها
         expected_columns = ["timestamp", "open", "high", "low", "close", "volume"]
         if len(raw[0]) != len(expected_columns):
             raise ValueError("Missing OHLCV column")
