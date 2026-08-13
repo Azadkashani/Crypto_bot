@@ -109,12 +109,14 @@ class ExecutionEngine:
     def _check_balance(self, risk_amount: float) -> Dict[str, Any]:
         try:
             balance = self.exchange.get_balance()
+            if not isinstance(balance, dict):
+                return {"valid": False, "reason": "Balance unavailable"}
             total = balance.get("total")
             if total is None or total <= 0:
                 return {"valid": False, "reason": "Balance unavailable"}
             if total < risk_amount:
                 return {"valid": False, "reason": "Insufficient balance"}
-            return {"valid": True, "balance": total}
+            return {"valid": True, "balance": float(total)}
         except PermissionError:
             return {"valid": False, "reason": "Balance unavailable"}
         except Exception as e:
@@ -123,10 +125,14 @@ class ExecutionEngine:
     def _check_existing_positions(self, symbol: str) -> Dict[str, Any]:
         try:
             positions = self.exchange.get_positions()
-            for pos in positions:
-                if pos.get("symbol") == symbol and pos.get("contracts") not in (0, None):
-                    return {"valid": False, "reason": "Existing position"}
-            return {"valid": True}
+            if isinstance(positions, list):
+                for pos in positions:
+                    if pos.get("symbol") == symbol and pos.get("contracts") not in (0, None):
+                        return {"valid": False, "reason": "Existing position"}
+                return {"valid": True}
+            return {"valid": False, "reason": "Position data unavailable"}
+        except PermissionError:
+            return {"valid": False, "reason": "Position data unavailable"}
         except Exception as e:
             return {"valid": False, "reason": f"Position check failed: {str(e)}"}
 
@@ -275,11 +281,14 @@ class ExecutionEngine:
         except Exception as e:
             # Ambiguous network error: check exchange state
             self._duplicate_guard.discard(signal_hash)
-            self._check_existing_positions(symbol)
+            state_check = self._check_existing_positions(symbol)
+            # اگر state_check نشان داد پوزیشنی وجود دارد، باید مدیریت شود
+            # اما اینجا فقط fail-closed و با یک بار فراخوانی
             return {
                 "success": False,
                 "executed": False,
                 "reason": f"Entry order failed: {str(e)}",
+                "position_state": state_check.get("valid"),
             }
 
         # GATE 17: Verify entry result
