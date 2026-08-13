@@ -46,42 +46,36 @@ def _timeframe_to_timedelta(tf: str) -> timedelta:
 class GateExchange:
     """
     آداپتور صرافی Gate.io با تأکید بر بازارهای USDT-M Perpetual.
+
+    بازارها به‌صورت lazy بارگذاری می‌شوند و هیچ فراخوانی صرافی در سازنده انجام نمی‌شود.
     """
 
     def __init__(self, exchange_id: Optional[str] = None, options: Optional[dict] = None):
-        """
-        سازنده. آداپتور یک نمونه ccxt.gate می‌سازد و بازارها را بارگذاری می‌کند.
-
-        پارامترها:
-            exchange_id: شناسه صرافی. اگر None باشد از config.EXCHANGE_ID استفاده می‌شود.
-            options: تنظیمات صرافی. اگر None باشد از config.EXCHANGE_OPTIONS استفاده می‌شود.
-        """
         self.exchange_id = exchange_id or config.EXCHANGE_ID
         self.options = options or config.EXCHANGE_OPTIONS.copy()
         self.exchange = ccxt.gate(self.options)
-        self.markets: Dict[str, Any] = {}
-        # بارگذاری خودکار بازارها برای جلوگیری از KeyError در مصرف‌کنندگان
-        try:
+        self._markets: Dict[str, Any] = {}
+
+    @property
+    def markets(self) -> Dict[str, Any]:
+        """بازگرداندن بازارها؛ اگر هنوز بارگذاری نشده باشند، بارگذاری می‌شوند."""
+        if not self._markets:
             self.load_markets()
-        except Exception:
-            # در صورت خطا، بازارها خالی می‌مانند؛ مصرف‌کننده باید خطای مناسب بدهد
-            self.markets = {}
+        return self._markets
 
     # ------------------------------------------------------------------
     # بارگذاری بازار
     # ------------------------------------------------------------------
     def load_markets(self) -> Dict[str, Any]:
-        """بارگذاری بازارها از صرافی و ذخیره در self.markets."""
-        self.markets = self.exchange.load_markets()
-        return self.markets
+        """بارگذاری بازارها از صرافی و ذخیره در self._markets."""
+        self._markets = self.exchange.load_markets()
+        return self._markets
 
     # ------------------------------------------------------------------
     # دریافت بازار
     # ------------------------------------------------------------------
     def get_market(self, symbol: str) -> Dict[str, Any]:
         """دریافت اطلاعات بازار برای نماد مشخص."""
-        if not self.markets:
-            self.load_markets()
         market = self.markets.get(symbol)
         if market is None:
             raise ValueError(f"Symbol not found: {symbol}")
@@ -311,11 +305,11 @@ class GateExchange:
 
         بازارهایی که حجم نامعتبر دارند یا نوع آن‌ها نادرست است حذف می‌شوند.
         """
-        if not self.markets:
+        if not self._markets:
             self.load_markets()
 
         eligible = []
-        for symbol in self.markets:
+        for symbol in self._markets:
             result = self.is_market_eligible(symbol)
             if result["eligible"]:
                 eligible.append(result)
