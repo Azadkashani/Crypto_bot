@@ -247,7 +247,10 @@ class GateExchange:
         except Exception:
             return None
 
-        quote_volume = ticker.get("quote_volume")
+        quote_volume = ticker.get("quoteVolume")
+        if quote_volume is None:
+            quote_volume = ticker.get("quote_volume")
+
         if quote_volume is None:
             return None
         try:
@@ -353,7 +356,6 @@ class GateExchange:
 
         # نرمال‌سازی ساختارهای مختلف پاسخ بالانس
         if isinstance(raw, dict):
-            # ساختار ccxt: {"USDT": {"free":..., "used":..., "total":...}}
             if "USDT" in raw and isinstance(raw.get("USDT"), dict):
                 usdt = raw["USDT"]
                 return {
@@ -363,7 +365,6 @@ class GateExchange:
                     "total": usdt.get("total"),
                 }
 
-            # ساختار ccxt: {"free": {"USDT":...}, "used": ..., "total": ...}
             if "total" in raw and isinstance(raw.get("total"), dict):
                 free = raw.get("free", {}).get("USDT")
                 used = raw.get("used", {}).get("USDT")
@@ -375,7 +376,6 @@ class GateExchange:
                     "total": total,
                 }
 
-            # ساختار ساده‌شده: {"currency": "USDT", "free":..., "used":..., "total":...}
             if "currency" in raw:
                 return {
                     "currency": raw.get("currency", "USDT"),
@@ -384,7 +384,6 @@ class GateExchange:
                     "total": raw.get("total"),
                 }
 
-            # ساختار ساده دیگر: {"USDT": <number>}
             if "USDT" in raw and isinstance(raw.get("USDT"), (int, float)):
                 total = raw["USDT"]
                 return {
@@ -394,7 +393,6 @@ class GateExchange:
                     "total": float(total),
                 }
 
-        # در صورت عدم تشخیص
         return {
             "currency": "USDT",
             "free": None,
@@ -412,11 +410,7 @@ class GateExchange:
         self._require_credentials()
         raw_positions = self._call_exchange_method('fetch_positions', 'get_positions')
 
-        # اگر خروجی از قبل نرمال‌شده باشد (FakeExchange)
-        if isinstance(raw_positions, list):
-            return raw_positions
-
-        # تبدیل ساختار ccxt به فرمت نرمال‌شده
+        # همیشه نرمال‌سازی انجام می‌شود؛ چه ورودی list باشد چه ساختار ccxt
         positions = []
         for p in raw_positions:
             positions.append({
