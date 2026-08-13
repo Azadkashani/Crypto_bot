@@ -281,14 +281,11 @@ class ExecutionEngine:
         except Exception as e:
             # Ambiguous network error: check exchange state
             self._duplicate_guard.discard(signal_hash)
-            state_check = self._check_existing_positions(symbol)
-            # اگر state_check نشان داد پوزیشنی وجود دارد، باید مدیریت شود
-            # اما اینجا فقط fail-closed و با یک بار فراخوانی
+            self._check_existing_positions(symbol)
             return {
                 "success": False,
                 "executed": False,
                 "reason": f"Entry order failed: {str(e)}",
-                "position_state": state_check.get("valid"),
             }
 
         # GATE 17: Verify entry result
