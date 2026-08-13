@@ -26,20 +26,24 @@ def _timeframe_to_timedelta(tf: str) -> timedelta:
         raise ValueError(f"Unsupported timeframe: {tf}")
 
 
-def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFrame,
-                    as_of: pd.Timestamp = None) -> dict:
+def generate_signal(
+    df_4h: pd.DataFrame,
+    df_1h: pd.DataFrame,
+    df_5m: pd.DataFrame,
+    as_of: pd.Timestamp = None,
+) -> dict:
     """
-    تولید سیگنال LONG/SHORT بر اساس ترتیب تاییدشده.
+    تولید سیگنال LONG/SHORT بر اساس توالی تأییدشده.
 
     پارامترها:
-        df_4h: دیتافریم 4 ساعته.
-        df_1h: دیتافریم 1 ساعته.
-        df_5m: دیتافریم 5 دقیقه‌ای.
-        as_of: (اختیاری) زمان تصمیم‌گیری. اگر None باشد، آخرین کندل هر دیتافریم
-              به عنوان آخرین کندل بسته در نظر گرفته می‌شود.
+        df_4h: دیتافریم ۴ ساعته.
+        df_1h: دیتافریم ۱ ساعته.
+        df_5m: دیتافریم ۵ دقیقه‌ای.
+        as_of: (اختیاری) زمان تصمیم‌گیری. اگر None باشد،
+              از زمان بسته‌شدن آخرین کندل 5m استفاده می‌شود.
 
     خروجی:
-        dict با ساختار مشخص.
+        dict شامل signal, valid, reason و اطلاعات لازم.
     """
 
     def _filter_closed(df: pd.DataFrame, tf: str) -> pd.DataFrame:
@@ -52,6 +56,20 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
         mask = df.index + delta <= as_of
         return df.loc[mask]
 
+    # زمان تصمیم‌گیری بر اساس آخرین کندل بسته‌شده 5m
+    if as_of is None:
+        if df_5m.empty:
+            return {
+                "signal": "NONE",
+                "valid": False,
+                "reason": "Insufficient 5m data",
+                "choch": False,
+                "bos": False,
+                "rsi_recovery": False,
+            }
+        decision_delta = _timeframe_to_timedelta(config.TIMEFRAME_5M)
+        as_of = df_5m.index[-1] + decision_delta
+
     df_4h_closed = _filter_closed(df_4h, config.TIMEFRAME_4H)
     df_1h_closed = _filter_closed(df_1h, config.TIMEFRAME_1H)
     df_5m_closed = _filter_closed(df_5m, config.TIMEFRAME_5M)
@@ -63,7 +81,7 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
             "reason": "Insufficient 5m data",
             "choch": False,
             "bos": False,
-            "rsi_recovery": False
+            "rsi_recovery": False,
         }
 
     r4h = regime.get_regime(df_4h_closed) if not df_4h_closed.empty else regime.REGIME_RANGE
@@ -82,12 +100,13 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
             "regime_1h": r1h,
             "choch": False,
             "bos": False,
-            "rsi_recovery": False
+            "rsi_recovery": False,
         }
 
     rsi_df = indicators.add_rsi(df_5m_closed, period=config.RSI_PERIOD)
-    rsi_col = f'rsi_{config.RSI_PERIOD}'
+    rsi_col = f"rsi_{config.RSI_PERIOD}"
     rsi_series = rsi_df[rsi_col].dropna()
+
     if len(rsi_series) < 2:
         return {
             "signal": "NONE",
@@ -95,7 +114,7 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
             "reason": "Insufficient RSI data",
             "choch": False,
             "bos": False,
-            "rsi_recovery": False
+            "rsi_recovery": False,
         }
 
     choch_df = choch.detect_choch(df_5m_closed)
@@ -106,17 +125,27 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
     previous_rsi = rsi_series.iloc[-2]
 
     if direction == "LONG":
-        rsi_condition = (rsi_series.min() <= config.RSI_OVERSOLD) and (latest_rsi > previous_rsi)
-        choch_condition = choch_df['bullish_choch'].any()
-        bos_condition = bos_df['bullish_bos'].any()
-    else:
-        rsi_condition = (rsi_series.max() >= config.RSI_OVERBOUGHT) and (latest_rsi < previous_rsi)
-        choch_condition = choch_df['bearish_choch'].any()
-        bos_condition = bos_df['bearish_bos'].any()
+        rsi_condition = (
+            rsi_series.min() <= config.RSI_OVERSOLD
+            and latest_rsi > previous_rsi
+        )
+        choch_condition = bool(choch_df["bullish_choch"].any())
+        bos_condition = bool(bos_df["bullish_bos"].any())
+    else:  # SHORT
+        rsi_condition = (
+            rsi_series.max() >= config.RSI_OVERBOUGHT
+            and latest_rsi < previous_rsi
+        )
+        choch_condition = bool(choch_df["bearish_choch"].any())
+        bos_condition = bool(bos_df["bearish_bos"].any())
 
     has_prior_choch = choch_condition
-
-    signal_valid = direction is not None and rsi_condition and bos_condition and has_prior_choch
+    signal_valid = bool(
+        direction is not None
+        and rsi_condition
+        and has_prior_choch
+        and bos_condition
+    )
 
     if not signal_valid:
         reason_parts = []
@@ -127,6 +156,7 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
         if not bos_condition:
             reason_parts.append("BOS not detected")
         reason = ", ".join(reason_parts) or "Conditions not met"
+
         return {
             "signal": "NONE",
             "valid": False,
@@ -136,7 +166,7 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
             "rsi_5m": round(latest_rsi, 2),
             "rsi_recovery": bool(rsi_condition),
             "choch": bool(has_prior_choch),
-            "bos": bool(bos_condition)
+            "bos": bool(bos_condition),
         }
 
     return {
@@ -150,6 +180,5 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
         "rsi_recovery": bool(rsi_condition),
         "choch": bool(has_prior_choch),
         "bos": bool(bos_condition),
-        "timestamp": latest_5m
+        "timestamp": latest_5m,
     }
-    
