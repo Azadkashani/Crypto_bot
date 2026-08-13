@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import os
 import math
-from typing import Optional, Dict, Any, List, Union
+import decimal
+from typing import Optional, Dict, Any, List
 
 import config
 from gate_exchange import GateExchange, MIN_24H_VOLUME_USDT
@@ -140,7 +141,6 @@ class ExecutionEngine:
             if precision is None:
                 return {"valid": False, "reason": "No amount precision information"}
 
-            # گرد کردن به سمت پایین برای جلوگیری از افزایش ریسک
             import decimal
             d = decimal.Decimal(str(quantity))
             step = decimal.Decimal(str(precision))
@@ -193,7 +193,7 @@ class ExecutionEngine:
         if not market_check["valid"]:
             return {"success": False, "executed": False, "reason": market_check["reason"]}
 
-        # قیمت‌ها و حجم‌ها
+        # قیمت‌ها
         entry = signal.get("entry_price")
         sl = signal.get("stop_loss")
         tp = signal.get("take_profit")
@@ -273,8 +273,8 @@ class ExecutionEngine:
                 params={"reduceOnly": False},
             )
         except Exception as e:
+            # Ambiguous network error: check exchange state
             self._duplicate_guard.discard(signal_hash)
-            # Ambiguous network error: check exchange state before returning
             self._check_existing_positions(symbol)
             return {
                 "success": False,
@@ -289,7 +289,6 @@ class ExecutionEngine:
             filled = order_info.get("filled", 0)
             avg_price = order_info.get("average") or order_info.get("price")
         except Exception:
-            # If we cannot fetch order, assume failure
             self._duplicate_guard.discard(signal_hash)
             return {
                 "success": False,
