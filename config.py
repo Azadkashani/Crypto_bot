@@ -1,3 +1,4 @@
+# config.py
 """
 پیکربندی پروژه Crypto AI Trader V2.
 تمامی مقادیر باید از طریق این فایل مدیریت شوند.
@@ -69,3 +70,6 @@ ADX_MIN_TREND = 20
 TIMEFRAME_4H = TIMEFRAMES[0]
 TIMEFRAME_1H = TIMEFRAMES[1]
 TIMEFRAME_5M = TIMEFRAMES[2]
+
+# --- پارامترهای Risk Gate (فاز ۸) ---
+RISK_REWARD = 2.0
