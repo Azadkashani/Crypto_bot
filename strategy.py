@@ -40,39 +40,27 @@ def generate_signal(
         df_1h: دیتافریم ۱ ساعته.
         df_5m: دیتافریم ۵ دقیقه‌ای.
         as_of: (اختیاری) زمان تصمیم‌گیری. اگر None باشد،
-              از زمان بسته‌شدن آخرین کندل 5m استفاده می‌شود.
-
-    خروجی:
-        dict شامل signal, valid, reason و اطلاعات لازم.
+              هر تایم‌فریم به‌صورت مستقل با آخرین دادهٔ بسته‌شده در نظر گرفته می‌شود.
     """
 
     def _filter_closed(df: pd.DataFrame, tf: str) -> pd.DataFrame:
         """فقط کندل‌هایی را برمی‌گرداند که در زمان as_of کاملاً بسته شده‌اند."""
         if df.empty:
             return df
-        if as_of is None:
-            return df
         delta = _timeframe_to_timedelta(tf)
         mask = df.index + delta <= as_of
         return df.loc[mask]
 
-    # زمان تصمیم‌گیری بر اساس آخرین کندل بسته‌شده 5m
+    # اگر as_of مشخص نباشد، داده‌های ورودی را به‌عنوان کندل‌های بسته‌شده فرض می‌کنیم
+    # و هر تایم‌فریم را مستقل از تایم‌فریم‌های دیگر استفاده می‌کنیم.
     if as_of is None:
-        if df_5m.empty:
-            return {
-                "signal": "NONE",
-                "valid": False,
-                "reason": "Insufficient 5m data",
-                "choch": False,
-                "bos": False,
-                "rsi_recovery": False,
-            }
-        decision_delta = _timeframe_to_timedelta(config.TIMEFRAME_5M)
-        as_of = df_5m.index[-1] + decision_delta
-
-    df_4h_closed = _filter_closed(df_4h, config.TIMEFRAME_4H)
-    df_1h_closed = _filter_closed(df_1h, config.TIMEFRAME_1H)
-    df_5m_closed = _filter_closed(df_5m, config.TIMEFRAME_5M)
+        df_4h_closed = df_4h.copy()
+        df_1h_closed = df_1h.copy()
+        df_5m_closed = df_5m.copy()
+    else:
+        df_4h_closed = _filter_closed(df_4h, config.TIMEFRAME_4H)
+        df_1h_closed = _filter_closed(df_1h, config.TIMEFRAME_1H)
+        df_5m_closed = _filter_closed(df_5m, config.TIMEFRAME_5M)
 
     if df_5m_closed.empty:
         return {
