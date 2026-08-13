@@ -51,6 +51,45 @@ def _extract_volume(signal: Dict[str, Any]) -> Optional[float]:
     return volume
 
 
+def _has_valid_price_geometry(signal: Dict[str, Any]) -> bool:
+    """
+    بررسی هندسه قیمتی پایه برای LONG/SHORT.
+
+    LONG:
+        stop_loss < entry_price < take_profit
+
+    SHORT:
+        take_profit < entry_price < stop_loss
+    """
+    direction = signal.get("signal")
+    entry = signal.get("entry_price")
+    sl = signal.get("stop_loss")
+    tp = signal.get("take_profit")
+
+    # مقادیر باید عددی و مثبت باشند
+    try:
+        entry = float(entry)
+        sl = float(sl)
+        tp = float(tp)
+    except (TypeError, ValueError):
+        return False
+
+    if entry <= 0 or sl <= 0 or tp <= 0:
+        return False
+
+    if math.isnan(entry) or math.isnan(sl) or math.isnan(tp):
+        return False
+    if math.isinf(entry) or math.isinf(sl) or math.isinf(tp):
+        return False
+
+    if direction == "LONG":
+        return sl < entry < tp
+    elif direction == "SHORT":
+        return tp < entry < sl
+    else:
+        return False
+
+
 def _validate_signal(signal: Dict[str, Any]) -> bool:
     """
     بررسی اولیه سیگنال برای ورود به امتیازدهی.
@@ -59,6 +98,7 @@ def _validate_signal(signal: Dict[str, Any]) -> bool:
     - valid=True
     - direction = LONG یا SHORT
     - حجم ۲۴ ساعته >= 1_000_000
+    - هندسه قیمتی ورود/حد ضرر/حد سود معتبر باشد
     """
     if not isinstance(signal, dict):
         return False
@@ -75,6 +115,9 @@ def _validate_signal(signal: Dict[str, Any]) -> bool:
         return False
 
     if volume < MIN_24H_VOLUME_USDT:
+        return False
+
+    if not _has_valid_price_geometry(signal):
         return False
 
     return True
@@ -98,12 +141,10 @@ def _score_regime(signal: Dict[str, Any]) -> float:
 
 def _score_rsi(signal: Dict[str, Any]) -> float:
     """امتیاز کیفیت RSI pullback/recovery."""
-    # فقط در صورت تأیید بازیابی RSI در جهت معامله امتیاز کامل می‌گیرد
     rsi_recovery = signal.get("rsi_recovery", False)
     if rsi_recovery:
         return 100.0
 
-    # اگر اطلاعات RSI موجود باشد، امتیاز نسبی بر اساس فاصله از ناحیه اشباع
     rsi_5m = signal.get("rsi_5m")
     if rsi_5m is None:
         return 0.0
@@ -116,7 +157,7 @@ def _score_rsi(signal: Dict[str, Any]) -> float:
     direction = signal.get("signal")
     if direction == "LONG":
         if rsi <= config.RSI_OVERSOLD:
-            return 60.0  # نزدیک ناحیه اشباع فروش
+            return 60.0
         elif rsi < 50:
             return 40.0
         else:
@@ -146,7 +187,6 @@ def _score_volume(signal: Dict[str, Any]) -> float:
     if volume is None or volume < MIN_24H_VOLUME_USDT:
         return 0.0
 
-    # مقیاس: تا 10 میلیون دلار امتیاز خطی از 0 تا 100
     upper = 10_000_000
     if volume >= upper:
         return 100.0
@@ -178,7 +218,7 @@ def calculate_score(signal: Dict[str, Any]) -> Optional[float]:
     محاسبه امتیاز سیگنال در بازه 0 تا 100.
 
     اگر سیگنال نامعتبر باشد یا حجم آن کمتر از حداقل لازم باشد،
-    None برمی‌گردد.
+    یا هندسه قیمتی نامعتبر باشد، None برمی‌گردد.
     """
     if not _validate_signal(signal):
         return None
@@ -196,14 +236,9 @@ def calculate_score(signal: Dict[str, Any]) -> Optional[float]:
     if total_weight <= 0:
         return 0.0
 
-    weighted_sum = sum(
-        components[key] * WEIGHTS.get(key, 0) for key in components
-    )
+    weighted_sum = sum(components[key] * WEIGHTS.get(key, 0) for key in components)
 
-    score = (weighted_sum / total_weight) * 100.0 / 100.0 * 100.0
-
-    # دقیق‌تر: وزن‌ها به درصد هستند
-    score = sum(components[key] * WEIGHTS[key] for key in components) / total_weight
+    score = weighted_sum / total_weight
 
     return max(0.0, min(100.0, score))
 
@@ -218,7 +253,7 @@ def rank_signals(signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         3. volume نزولی
         4. symbol صعودی (حروف الفبا)
 
-    فقط سیگنال‌هایی که حجم >= 1M دارند و امتیاز معتبر دارند وارد می‌شوند.
+    فقط سیگنال‌هایی که حجم >= 1M دارند و هندسه قیمت معتبر دارند وارد می‌شوند.
     """
     ranked = []
     for sig in signals:
@@ -227,15 +262,6 @@ def rank_signals(signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             copied = sig.copy()
             copied["score"] = score
             ranked.append(copied)
-
-    def _tie_breaker(item):
-        symbol = item.get("symbol", "")
-        rr = item.get("risk_reward")
-        rr = float(rr) if rr is not None else -1.0
-        vol = _extract_volume(item)
-        vol = vol if vol is not None else -1.0
-        # برای مرتب‌سازی نزولی بر اساس rr و vol، از منفی استفاده می‌کنیم
-        return (-rr, -vol, symbol.lower())
 
     ranked.sort(
         key=lambda item: (
