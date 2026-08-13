@@ -134,7 +134,6 @@ class FakeExchange:
 
 @pytest.fixture
 def fake_ccxt(monkeypatch):
-    """Fixture که ccxt.gate را با FakeExchange جایگزین می‌کند."""
     fake = FakeExchange()
     monkeypatch.setattr(gate_exchange.ccxt, "gate", lambda options: fake)
     return fake
@@ -142,7 +141,6 @@ def fake_ccxt(monkeypatch):
 
 @pytest.fixture
 def fake_gate(fake_ccxt):
-    """یک GateExchange واقعی با FakeExchange به عنوان موتور ccxt."""
     adapter = GateExchange()
     adapter.exchange = fake_ccxt
     return adapter
@@ -599,10 +597,11 @@ def test_entry_succeeds_but_tp_fails_protection_failure(fake_gate, valid_long_si
 
 
 def test_emergency_close_reduce_only(fake_gate, valid_long_signal):
+    original_create = fake_gate.exchange.create_order
     def create_with_both_fail(symbol, type, side, amount, params=None):
         if type in ("stop_market", "take_profit_market"):
             raise Exception("Protection rejected")
-        return fake_gate.exchange.create_order(symbol, type, side, amount, params)
+        return original_create(symbol, type, side, amount, params)
     fake_gate.exchange.create_order = create_with_both_fail
     engine = ExecutionEngine(fake_gate, live_trading_enabled=True)
     result = engine.execute(valid_long_signal)
@@ -612,10 +611,11 @@ def test_emergency_close_reduce_only(fake_gate, valid_long_signal):
 
 
 def test_emergency_close_correct_opposite_side(fake_gate, valid_short_signal):
+    original_create = fake_gate.exchange.create_order
     def create_with_sl_fail(symbol, type, side, amount, params=None):
         if type == "stop_market":
             raise Exception("SL failed")
-        return fake_gate.exchange.create_order(symbol, type, side, amount, params)
+        return original_create(symbol, type, side, amount, params)
     fake_gate.exchange.create_order = create_with_sl_fail
     engine = ExecutionEngine(fake_gate, live_trading_enabled=True)
     result = engine.execute(valid_short_signal)
@@ -626,10 +626,11 @@ def test_emergency_close_correct_opposite_side(fake_gate, valid_short_signal):
 
 
 def test_emergency_close_never_increases_position(fake_gate, valid_long_signal):
+    original_create = fake_gate.exchange.create_order
     def create_with_sl_fail(symbol, type, side, amount, params=None):
         if type == "stop_market":
             raise Exception("SL failed")
-        return fake_gate.exchange.create_order(symbol, type, side, amount, params)
+        return original_create(symbol, type, side, amount, params)
     fake_gate.exchange.create_order = create_with_sl_fail
     engine = ExecutionEngine(fake_gate, live_trading_enabled=True)
     engine.execute(valid_long_signal)
