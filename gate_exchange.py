@@ -184,7 +184,9 @@ class GateExchange:
         if timeframe not in SUPPORTED_TIMEFRAMES:
             raise ValueError(f"Unsupported timeframe: {timeframe}")
 
-        raw = self._call_exchange_method('fetch_ohlcv', 'get_ohlcv', symbol, timeframe, limit=limit)
+        raw = self._call_exchange_method(
+            'fetch_ohlcv', 'get_ohlcv', symbol, timeframe, limit=limit
+        )
         if not raw:
             return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
@@ -374,12 +376,15 @@ class GateExchange:
     # ------------------------------------------------------------------
     # ابزار کمکی برای فراخوانی متد صرافی با پشتیبانی از دو نام ممکن
     # ------------------------------------------------------------------
-    def _call_exchange_method(self, ccxt_name: str, generic_name: str, *args, **kwargs):
+    def _call_exchange_method(self, ccxt_name: str, generic_name: Optional[str] = None, *args, **kwargs):
         """
         فراخوانی متد صرافی با پشتیبانی از نام ccxt یا نام عمومی.
 
-        اگر متد ccxt موجود باشد، آن را صدا می‌زند؛ در غیر این صورت متد عمومی.
+        اگر generic_name داده نشود، همان ccxt_name استفاده می‌شود.
         """
+        if generic_name is None:
+            generic_name = ccxt_name
+
         if hasattr(self.exchange, ccxt_name):
             method = getattr(self.exchange, ccxt_name)
         elif hasattr(self.exchange, generic_name):
