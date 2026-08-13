@@ -188,9 +188,12 @@ class GateExchange:
         if not raw:
             return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
-        df = pd.DataFrame(
-            raw, columns=["timestamp", "open", "high", "low", "close", "volume"]
-        )
+        # بررسی تعداد ستون‌ها
+        expected_columns = ["timestamp", "open", "high", "low", "close", "volume"]
+        if len(raw[0]) != len(expected_columns):
+            raise ValueError("Missing OHLCV column")
+
+        df = pd.DataFrame(raw, columns=expected_columns)
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
         df.set_index("timestamp", inplace=True)
 
