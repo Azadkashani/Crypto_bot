@@ -10,12 +10,12 @@ import choch
 import bos
 
 
-def _make_index(n, freq='5min'):
-    return pd.date_range(start='2025-01-01', periods=n, freq=freq, tz='UTC')
+def _make_index(n, freq='5min', start='2025-01-01'):
+    return pd.date_range(start=start, periods=n, freq=freq, tz='UTC')
 
 
-def _make_regime_df(direction, n=200, freq='4h'):
-    idx = _make_index(n, freq)
+def _make_regime_df(direction, n=200, freq='4h', start='2024-01-01'):
+    idx = _make_index(n, freq=freq, start=start)
     if direction == 'bullish':
         close = 100 + np.arange(n) * 1.0
     else:
@@ -268,4 +268,3 @@ def test_timeframe_dataframes_are_independent():
     res_long = strategy.generate_signal(df_4h, df_1h, df_5m_long)
     res_short = strategy.generate_signal(df_4h, df_1h, df_5m_short)
     assert res_long["signal"] != res_short["signal"]
-    
