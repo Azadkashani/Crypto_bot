@@ -68,7 +68,7 @@ class GateExchange:
     # ------------------------------------------------------------------
     def load_markets(self) -> Dict[str, Any]:
         """بارگذاری بازارها از صرافی و ذخیره در self._markets."""
-        self._markets = self.exchange.load_markets()
+        self._markets = self._call_exchange_method('load_markets')
         return self._markets
 
     # ------------------------------------------------------------------
@@ -142,7 +142,7 @@ class GateExchange:
         خروجی شامل:
             symbol, last, bid, ask, high, low, base_volume, quote_volume, timestamp
         """
-        ticker = self.exchange.fetch_ticker(symbol)
+        ticker = self._call_exchange_method('fetch_ticker', 'get_ticker', symbol)
         return {
             "symbol": symbol,
             "last": ticker.get("last"),
@@ -184,7 +184,7 @@ class GateExchange:
         if timeframe not in SUPPORTED_TIMEFRAMES:
             raise ValueError(f"Unsupported timeframe: {timeframe}")
 
-        raw = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        raw = self._call_exchange_method('fetch_ohlcv', 'get_ohlcv', symbol, timeframe, limit=limit)
         if not raw:
             return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
@@ -331,7 +331,7 @@ class GateExchange:
             dict شامل currency, free, used, total
         """
         self._require_credentials()
-        raw = self.exchange.fetch_balance()
+        raw = self._call_exchange_method('fetch_balance', 'get_balance')
         if "USDT" in raw:
             usdt = raw["USDT"]
         elif "total" in raw and "USDT" in raw.get("total", {}):
@@ -357,7 +357,7 @@ class GateExchange:
             symbol, side, contracts, entry_price, mark_price, unrealized_pnl, leverage
         """
         self._require_credentials()
-        raw_positions = self.exchange.fetch_positions()
+        raw_positions = self._call_exchange_method('fetch_positions', 'get_positions')
         positions = []
         for p in raw_positions:
             positions.append({
@@ -370,3 +370,22 @@ class GateExchange:
                 "leverage": p.get("leverage"),
             })
         return positions
+
+    # ------------------------------------------------------------------
+    # ابزار کمکی برای فراخوانی متد صرافی با پشتیبانی از دو نام ممکن
+    # ------------------------------------------------------------------
+    def _call_exchange_method(self, ccxt_name: str, generic_name: str, *args, **kwargs):
+        """
+        فراخوانی متد صرافی با پشتیبانی از نام ccxt یا نام عمومی.
+
+        اگر متد ccxt موجود باشد، آن را صدا می‌زند؛ در غیر این صورت متد عمومی.
+        """
+        if hasattr(self.exchange, ccxt_name):
+            method = getattr(self.exchange, ccxt_name)
+        elif hasattr(self.exchange, generic_name):
+            method = getattr(self.exchange, generic_name)
+        else:
+            raise AttributeError(
+                f"Exchange object has no attribute '{ccxt_name}' or '{generic_name}'"
+            )
+        return method(*args, **kwargs)
