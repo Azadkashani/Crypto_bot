@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import ccxt
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Union
@@ -57,10 +58,6 @@ class GateExchange:
         """
         self.exchange_id = exchange_id or config.EXCHANGE_ID
         self.options = options or config.EXCHANGE_OPTIONS.copy()
-        # هرگز اطلاعات حساس را در خروجی یا خطا قرار نده
-        import ccxt
-
-        # سازنده ccxt.gate که در پروژه استفاده شده است
         self.exchange = ccxt.gate(self.options)
         self.markets: Dict[str, Any] = {}
 
@@ -68,9 +65,7 @@ class GateExchange:
     # بارگذاری بازار
     # ------------------------------------------------------------------
     def load_markets(self) -> Dict[str, Any]:
-        """
-        بارگذاری بازارها از صرافی و ذخیره در self.markets.
-        """
+        """بارگذاری بازارها از صرافی و ذخیره در self.markets."""
         self.markets = self.exchange.load_markets()
         return self.markets
 
@@ -101,7 +96,6 @@ class GateExchange:
         """
         market = self.get_market(symbol)
 
-        # استخراج اطلاعات
         base = market.get("base")
         quote = market.get("quote")
         settle = market.get("settle")
@@ -111,7 +105,6 @@ class GateExchange:
         contract = market.get("contract", False)
         linear = market.get("linear", False)
 
-        # بررسی‌های صریح
         if spot:
             raise ValueError(f"Spot market is not allowed: {symbol}")
 
@@ -201,7 +194,6 @@ class GateExchange:
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
         df.set_index("timestamp", inplace=True)
 
-        # اعتبارسنجی
         if df.empty:
             return df
         if not df.index.is_monotonic_increasing:
@@ -223,7 +215,6 @@ class GateExchange:
             else:
                 current_time = pd.Timestamp(current_time)
             delta = _timeframe_to_timedelta(timeframe)
-            # کندل‌هایی که زمان بسته‌شدن آن‌ها <= current_time باشد
             closed_mask = df.index + delta <= current_time
             df = df.loc[closed_mask]
 
@@ -339,20 +330,16 @@ class GateExchange:
         """
         self._require_credentials()
         raw = self.exchange.fetch_balance()
-        # استخراج USDT در صورت وجود
         if "USDT" in raw:
             usdt = raw["USDT"]
         elif "total" in raw and "USDT" in raw.get("total", {}):
-            usdt = {"free": raw.get("free", {}).get("USDT"),
-                    "used": raw.get("used", {}).get("USDT"),
-                    "total": raw.get("total", {}).get("USDT")}
-        else:
-            # فرمت‌های متفاوت ccxt
             usdt = {
-                "free": None,
-                "used": None,
-                "total": None,
+                "free": raw.get("free", {}).get("USDT"),
+                "used": raw.get("used", {}).get("USDT"),
+                "total": raw.get("total", {}).get("USDT"),
             }
+        else:
+            usdt = {"free": None, "used": None, "total": None}
         return {
             "currency": "USDT",
             "free": usdt.get("free"),
