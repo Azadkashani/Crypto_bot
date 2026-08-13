@@ -70,7 +70,7 @@ class FakeExchange:
     def fetch_ticker(self, symbol):
         if symbol in self.tickers:
             return self.tickers[symbol]
-        # پیش‌فرض حجم متناسب
+        # پیش‌فرض حجم بالا برای تست‌های عمومی
         return {
             "symbol": symbol,
             "last": 50000.0,
@@ -162,7 +162,6 @@ def test_spot_market_rejected(fake_exchange):
 def test_wrong_settlement_rejected(fake_exchange):
     adapter = GateExchange()
     adapter.load_markets()
-    # تغییر settle برای تست
     adapter.markets["BTC/USDT:USDT"]["settle"] = "USD"
     with pytest.raises(ValueError, match="settlement"):
         adapter.validate_perpetual_symbol("BTC/USDT:USDT")
@@ -294,7 +293,7 @@ def test_incomplete_latest_candle_excluded(fake_exchange):
         [int(t2.timestamp()*1000), 103, 108, 98, 106, 10],
     ]
     fake_exchange.ohlcv.setdefault("BTC/USDT:USDT", {})["5m"] = raw
-    df = adapter.get_ohlcv("BTC/USDT:USDT", "5m", closed_only=True, current_time=now + timedelta(minutes=3))
+    df = adapter.get_ohlcv("BTC/USDT:USDT", "5m", closed_only=True, current_time=now + timedelta(minutes=6))
     assert len(df) == 1
 
 
@@ -307,7 +306,6 @@ def test_closed_only_behavior_correct(fake_exchange):
         raw.append([int(ts.timestamp()*1000), 100+i, 105+i, 95+i, 102+i, 10])
     fake_exchange.ohlcv.setdefault("BTC/USDT:USDT", {})["5m"] = raw
     df = adapter.get_ohlcv("BTC/USDT:USDT", "5m", closed_only=True, current_time=now + timedelta(minutes=7))
-    # فقط کندل اول بسته شده (00:00 تا 00:05) و زمان مرجع 00:07، کندل دوم هنوز باز است
     assert len(df) == 1
 
 
@@ -454,7 +452,6 @@ def test_malformed_quote_volume_is_rejected(fake_exchange):
 
 
 def test_volume_from_unrelated_timeframe_not_used(fake_exchange):
-    # تست‌که فقط quote_volume استفاده می‌شود و baseVolume صرفاً نادیده گرفته می‌شود
     fake_exchange.tickers["BTC/USDT:USDT"] = {
         "quoteVolume": 5_000_000.0,
         "baseVolume": 50.0,
@@ -503,7 +500,6 @@ def test_get_eligible_markets_excludes_spot(fake_exchange):
 
 
 def test_get_eligible_markets_excludes_non_perpetual(fake_exchange):
-    # تغییر نوع ETH به spot? در fake بازار ETH swap است؛ فقط symbol نامعتبر می‌کنیم
     adapter = GateExchange()
     adapter.load_markets()
     adapter.markets["ETH/USDT:USDT"]["swap"] = False
@@ -519,10 +515,12 @@ def test_get_eligible_markets_returns_only_valid_usdt_markets(fake_exchange):
     adapter = GateExchange()
     adapter.load_markets()
     eligible = adapter.get_eligible_markets()
-    assert len(eligible) == 2  # BTC و XRP از قبل XRP volume? باید XRP هم set شود
+    assert len(eligible) == 2  # BTC و XRP (XRP بدون ticker صریح، default 5M دارد)
     # ری‌ست و فقط BTC با حجم کافی
     fake_exchange.tickers = {}
     _set_ticker(fake_exchange, "BTC/USDT:USDT", 3_000_000.0)
+    _set_ticker(fake_exchange, "ETH/USDT:USDT", 500_000.0)
+    _set_ticker(fake_exchange, "XRP/USDT:USDT", 500_000.0)
     eligible = adapter.get_eligible_markets()
     assert all(m["symbol"] == "BTC/USDT:USDT" for m in eligible)
 
@@ -553,7 +551,6 @@ def test_credentials_never_included_in_errors(fake_exchange):
 
 def test_no_order_endpoint_called(fake_exchange):
     adapter = GateExchange()
-    # هیچ متدی از صرافی برای سفارش نباید فراخوانی شود
     assert hasattr(adapter.exchange, "create_order") is False
 
 
