@@ -1,6 +1,7 @@
+# strategy.py (نسخه کامل با ادغام Risk Gate)
 """
 موتور سیگنال نهایی بر اساس رژیم 4H/1H و پولبک 5M.
-ترتیب الزامی: RSI → CHOCH → BOS.
+ترتیب الزامی: RSI → CHOCH → BOS → Risk Gate.
 """
 
 import pandas as pd
@@ -10,6 +11,7 @@ import regime
 import choch
 import bos
 import config
+from risk_gate import evaluate_risk
 
 
 def _timeframe_to_timedelta(tf: str) -> timedelta:
@@ -33,7 +35,7 @@ def generate_signal(
     as_of: pd.Timestamp = None,
 ) -> dict:
     """
-    تولید سیگنال LONG/SHORT بر اساس توالی تأییدشده.
+    تولید سیگنال LONG/SHORT بر اساس توالی تأییدشده و اعتبارسنجی ریسک.
 
     پارامترها:
         df_4h: دیتافریم ۴ ساعته.
@@ -41,6 +43,9 @@ def generate_signal(
         df_5m: دیتافریم ۵ دقیقه‌ای.
         as_of: (اختیاری) زمان تصمیم‌گیری. اگر None باشد،
               هر تایم‌فریم به‌صورت مستقل با آخرین دادهٔ بسته‌شده در نظر گرفته می‌شود.
+
+    خروجی:
+        dict شامل signal, valid, reason و اطلاعات لازم.
     """
 
     def _filter_closed(df: pd.DataFrame, tf: str) -> pd.DataFrame:
@@ -213,6 +218,22 @@ def generate_signal(
 
     bos_idx = bos_candidates[0]
 
+    # 5) Risk Gate
+    risk_result = evaluate_risk(bos_df, bos_idx, direction, rr=config.RISK_REWARD)
+
+    if not risk_result["valid"]:
+        return {
+            "signal": "NONE",
+            "valid": False,
+            "reason": f"Risk gate: {risk_result['reason']}",
+            "regime_4h": r4h,
+            "regime_1h": r1h,
+            "rsi_5m": round(rsi_series.iloc[-1], 2),
+            "rsi_recovery": True,
+            "choch": True,
+            "bos": True,
+        }
+
     latest_5m = df_5m_closed.index[-1]
     latest_rsi = rsi_series.iloc[-1]
 
@@ -227,5 +248,9 @@ def generate_signal(
         "rsi_recovery": True,
         "choch": True,
         "bos": True,
+        "entry_price": risk_result["entry_price"],
+        "stop_loss": risk_result["stop_loss"],
+        "take_profit": risk_result["take_profit"],
+        "risk_reward": risk_result["risk_reward"],
         "timestamp": latest_5m,
     }
