@@ -268,3 +268,4 @@ def test_timeframe_dataframes_are_independent():
     res_long = strategy.generate_signal(df_4h, df_1h, df_5m_long)
     res_short = strategy.generate_signal(df_4h, df_1h, df_5m_short)
     assert res_long["signal"] != res_short["signal"]
+    
