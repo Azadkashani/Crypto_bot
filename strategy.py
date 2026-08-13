@@ -152,3 +152,4 @@ def generate_signal(df_4h: pd.DataFrame, df_1h: pd.DataFrame, df_5m: pd.DataFram
         "bos": bool(bos_condition),
         "timestamp": latest_5m
     }
+    
