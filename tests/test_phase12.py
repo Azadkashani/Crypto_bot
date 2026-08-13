@@ -277,21 +277,29 @@ def test_profitable_window_ratio(monkeypatch):
 def test_best_worst_window_detection(monkeypatch):
     class MixedEngine:
         def __init__(self, data_5m, data_1h, data_4h, initial_balance):
+            self.data_5m = data_5m
             self.counter = 0
+
         def run(self):
             self.counter += 1
-            pnl = [1.0, 5.0, -2.0, 3.0][self.counter - 1]
+            pnl_values = [1.0, 5.0, -2.0, 3.0, 1.0, 5.0]
+            pnl = pnl_values[(self.counter - 1) % len(pnl_values)]
             trades = []
             if pnl != 0:
+                entry_time = self.data_5m.index[-1]  # آخرین کندل برش‌خورده (داخل test)
                 trades = [{
-                    "entry_time": pd.Timestamp('2025-01-01 00:00:00', tz='UTC'),
-                    "exit_time": pd.Timestamp('2025-01-01 00:05:00', tz='UTC'),
+                    "entry_time": entry_time,
+                    "exit_time": entry_time + timedelta(minutes=5),
                     "pnl": pnl,
                     "r_multiple": pnl / 10.0,
                     "risk_amount": 10.0,
                 }]
-            return {"trades": trades, "initial_balance": 1000,
-                    "final_balance": 1000 + pnl, "net_profit": pnl}
+            return {
+                "trades": trades,
+                "initial_balance": 1000,
+                "final_balance": 1000 + pnl,
+                "net_profit": pnl,
+            }
 
     monkeypatch.setattr(walk_forward, "BacktestEngine", MixedEngine)
     data_5m = _make_data_5m(40)
@@ -356,9 +364,12 @@ def test_realistic_multi_window_scenario(monkeypatch):
                         "r_multiple": pnl / 5.0,
                         "risk_amount": 5.0,
                     })
-            return {"trades": trades, "initial_balance": 1000,
-                    "final_balance": 1000 + sum(t['pnl'] for t in trades),
-                    "net_profit": sum(t['pnl'] for t in trades)}
+            return {
+                "trades": trades,
+                "initial_balance": 1000,
+                "final_balance": 1000 + sum(t['pnl'] for t in trades),
+                "net_profit": sum(t['pnl'] for t in trades),
+            }
 
     monkeypatch.setattr(walk_forward, "BacktestEngine", RealisticEngine)
     data_5m = _make_data_5m(60)
