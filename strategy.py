@@ -129,6 +129,7 @@ def generate_signal(
             rsi_series.min() <= config.RSI_OVERSOLD
             and latest_rsi > previous_rsi
         )
+        # کل تاریخچه تا لحظه تصمیم بررسی می‌شود
         choch_condition = bool(choch_df["bullish_choch"].any())
         bos_condition = bool(bos_df["bullish_bos"].any())
     else:  # SHORT
@@ -182,4 +183,3 @@ def generate_signal(
         "bos": bool(bos_condition),
         "timestamp": latest_5m,
     }
-    
