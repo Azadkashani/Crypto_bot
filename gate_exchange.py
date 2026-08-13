@@ -143,6 +143,15 @@ class GateExchange:
             symbol, last, bid, ask, high, low, base_volume, quote_volume, timestamp
         """
         ticker = self._call_exchange_method('fetch_ticker', 'get_ticker', symbol)
+
+        base_volume = ticker.get("baseVolume")
+        if base_volume is None:
+            base_volume = ticker.get("base_volume")
+
+        quote_volume = ticker.get("quoteVolume")
+        if quote_volume is None:
+            quote_volume = ticker.get("quote_volume")
+
         return {
             "symbol": symbol,
             "last": ticker.get("last"),
@@ -150,8 +159,8 @@ class GateExchange:
             "ask": ticker.get("ask"),
             "high": ticker.get("high"),
             "low": ticker.get("low"),
-            "base_volume": ticker.get("baseVolume") or ticker.get("base_volume"),
-            "quote_volume": ticker.get("quoteVolume") or ticker.get("quote_volume"),
+            "base_volume": base_volume,
+            "quote_volume": quote_volume,
             "timestamp": ticker.get("timestamp"),
         }
 
@@ -341,21 +350,56 @@ class GateExchange:
         """
         self._require_credentials()
         raw = self._call_exchange_method('fetch_balance', 'get_balance')
-        if "USDT" in raw:
-            usdt = raw["USDT"]
-        elif "total" in raw and "USDT" in raw.get("total", {}):
-            usdt = {
-                "free": raw.get("free", {}).get("USDT"),
-                "used": raw.get("used", {}).get("USDT"),
-                "total": raw.get("total", {}).get("USDT"),
-            }
-        else:
-            usdt = {"free": None, "used": None, "total": None}
+
+        # نرمال‌سازی ساختارهای مختلف پاسخ بالانس
+        if isinstance(raw, dict):
+            # ساختار ccxt: {"USDT": {"free":..., "used":..., "total":...}}
+            if "USDT" in raw and isinstance(raw.get("USDT"), dict):
+                usdt = raw["USDT"]
+                return {
+                    "currency": "USDT",
+                    "free": usdt.get("free"),
+                    "used": usdt.get("used"),
+                    "total": usdt.get("total"),
+                }
+
+            # ساختار ccxt: {"free": {"USDT":...}, "used": ..., "total": ...}
+            if "total" in raw and isinstance(raw.get("total"), dict):
+                free = raw.get("free", {}).get("USDT")
+                used = raw.get("used", {}).get("USDT")
+                total = raw.get("total", {}).get("USDT")
+                return {
+                    "currency": "USDT",
+                    "free": free,
+                    "used": used,
+                    "total": total,
+                }
+
+            # ساختار ساده‌شده: {"currency": "USDT", "free":..., "used":..., "total":...}
+            if "currency" in raw:
+                return {
+                    "currency": raw.get("currency", "USDT"),
+                    "free": raw.get("free"),
+                    "used": raw.get("used"),
+                    "total": raw.get("total"),
+                }
+
+            # ساختار ساده دیگر: {"USDT": <number>}
+            if "USDT" in raw and isinstance(raw.get("USDT"), (int, float)):
+                total = raw["USDT"]
+                return {
+                    "currency": "USDT",
+                    "free": None,
+                    "used": None,
+                    "total": float(total),
+                }
+
+        # در صورت عدم تشخیص
         return {
             "currency": "USDT",
-            "free": usdt.get("free"),
-            "used": usdt.get("used"),
-            "total": usdt.get("total"),
+            "free": None,
+            "used": None,
+            "total": None,
         }
 
     def get_positions(self) -> List[Dict[str, Any]]:
@@ -367,6 +411,12 @@ class GateExchange:
         """
         self._require_credentials()
         raw_positions = self._call_exchange_method('fetch_positions', 'get_positions')
+
+        # اگر خروجی از قبل نرمال‌شده باشد (FakeExchange)
+        if isinstance(raw_positions, list):
+            return raw_positions
+
+        # تبدیل ساختار ccxt به فرمت نرمال‌شده
         positions = []
         for p in raw_positions:
             positions.append({
