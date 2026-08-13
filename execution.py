@@ -16,21 +16,13 @@ from __future__ import annotations
 
 import os
 import math
-from typing import Optional, Dict, Any, List
-import pandas as pd
+from typing import Optional, Dict, Any, List, Union
 
 import config
 from gate_exchange import GateExchange, MIN_24H_VOLUME_USDT
 
 
-# ----------------------------------------------------------------------
-# تنظیمات live
-# ----------------------------------------------------------------------
-# مقدار پیش‌فرض از متغیر محیطی خوانده می‌شود؛ اگر موجود نبود، False است.
-# هرگز به‌صورت خودکار true نمی‌شود.
 LIVE_TRADING_ENABLED = os.getenv("LIVE_TRADING_ENABLED", "false").lower() == "true"
-
-# اگر config صراحتاً مقدار داشت، آن را در نظر بگیر
 if hasattr(config, "LIVE_TRADING_ENABLED"):
     LIVE_TRADING_ENABLED = bool(config.LIVE_TRADING_ENABLED)
 
@@ -41,26 +33,19 @@ class ExecutionEngine:
     """
 
     def __init__(self, exchange: GateExchange, live_trading_enabled: Optional[bool] = None):
-        """
-        پارامترها:
-            exchange: نمونه GateExchange (یا FakeExchange برای تست)
-            live_trading_enabled: اگر None باشد، از ثابت LIVE_TRADING_ENABLED استفاده می‌شود.
-        """
         self.exchange = exchange
         self.live_trading_enabled = (
             LIVE_TRADING_ENABLED if live_trading_enabled is None else live_trading_enabled
         )
-        self.last_orders = []          # برای ثبت شناسه سفارش‌ها (بدون اطلاعات حساس)
-        self._duplicate_guard = set()  # نگهبان درون‌حافظه‌ای برای جلوگیری از ارسال تکراری
+        self._duplicate_guard = set()
 
     # ------------------------------------------------------------------
-    # گیت‌های عمومی
+    # گیت‌ها
     # ------------------------------------------------------------------
     def _is_live_enabled(self) -> bool:
         return self.live_trading_enabled
 
     def _validate_signal(self, signal: Dict[str, Any]) -> Dict[str, Any]:
-        """بررسی اولیه سیگنال."""
         if not isinstance(signal, dict):
             return {"valid": False, "reason": "Signal must be a dictionary"}
         if signal.get("valid") is not True:
@@ -71,7 +56,6 @@ class ExecutionEngine:
         return {"valid": True, "direction": direction}
 
     def _validate_prices(self, direction: str, entry: float, sl: float, tp: float) -> Dict[str, Any]:
-        """بررسی روابط قیمتی."""
         if not all(isinstance(x, (int, float)) and not math.isnan(x) and not math.isinf(x)
                    for x in (entry, sl, tp)):
             return {"valid": False, "reason": "Invalid price values"}
@@ -80,7 +64,7 @@ class ExecutionEngine:
         if direction == "LONG":
             if not (sl < entry < tp):
                 return {"valid": False, "reason": "LONG price relationship invalid"}
-        else:  # SHORT
+        else:
             if not (tp < entry < sl):
                 return {"valid": False, "reason": "SHORT price relationship invalid"}
         return {"valid": True}
@@ -97,7 +81,7 @@ class ExecutionEngine:
             return {"valid": False, "reason": "Invalid risk amount"}
         if risk <= 0:
             return {"valid": False, "reason": "Risk amount must be positive"}
-        if risk > expected_risk * 1.001:  # تحمل خطای کوچک
+        if risk > expected_risk * 1.001:
             return {"valid": False, "reason": "Risk amount exceeds allowed maximum"}
         return {"valid": True}
 
@@ -113,9 +97,7 @@ class ExecutionEngine:
         return {"valid": True}
 
     def _check_market_eligibility(self, symbol: str) -> Dict[str, Any]:
-        """بررسی بازار و حجم ۲۴ ساعته در لحظه اجرا."""
         try:
-            # استفاده از متد امن موجود در GateExchange
             result = self.exchange.is_market_eligible(symbol)
             if not result.get("eligible"):
                 return {"valid": False, "reason": result.get("reason", "Market not eligible")}
@@ -124,7 +106,6 @@ class ExecutionEngine:
             return {"valid": False, "reason": f"Market eligibility check failed: {str(e)}"}
 
     def _check_balance(self, risk_amount: float) -> Dict[str, Any]:
-        """دریافت بالانس و بررسی کافی بودن."""
         try:
             balance = self.exchange.get_balance()
             total = balance.get("total")
@@ -133,22 +114,22 @@ class ExecutionEngine:
             if total < risk_amount:
                 return {"valid": False, "reason": "Insufficient balance"}
             return {"valid": True, "balance": total}
+        except PermissionError:
+            return {"valid": False, "reason": "Balance unavailable"}
         except Exception as e:
             return {"valid": False, "reason": f"Balance check failed: {str(e)}"}
 
     def _check_existing_positions(self, symbol: str) -> Dict[str, Any]:
-        """بررسی پوزیشن‌های باز برای نماد."""
         try:
             positions = self.exchange.get_positions()
             for pos in positions:
                 if pos.get("symbol") == symbol and pos.get("contracts") not in (0, None):
-                    return {"valid": False, "reason": "Existing position for symbol"}
+                    return {"valid": False, "reason": "Existing position"}
             return {"valid": True}
         except Exception as e:
             return {"valid": False, "reason": f"Position check failed: {str(e)}"}
 
     def _check_quantity_precision(self, symbol: str, quantity: float) -> Dict[str, Any]:
-        """بررسی دقت و حداقل مقدار بر اساس متادیتا بازار."""
         try:
             market = self.exchange.get_market(symbol)
             precision = market.get("precision", {}).get("amount")
@@ -156,26 +137,24 @@ class ExecutionEngine:
             min_amount = limits.get("amount", {}).get("min")
             min_cost = limits.get("cost", {}).get("min")
 
-            if precision is not None:
-                # گرد کردن به سمت پایین برای جلوگیری از افزایش ریسک
-                import decimal
-                d = decimal.Decimal(str(quantity))
-                step = decimal.Decimal(str(precision))
-                rounded = float(d.quantize(step, rounding=decimal.ROUND_DOWN))
-                if rounded <= 0:
-                    return {"valid": False, "reason": "Quantity rounded to zero"}
-                # استفاده از مقدار گردشده
-                if min_amount is not None and rounded < min_amount:
-                    return {"valid": False, "reason": "Quantity below minimum amount"}
-                if min_cost is not None:
-                    # نیاز به قیمت داریم که اینجا مقدار last را فرض می‌کنیم
-                    ticker = self.exchange.get_ticker(symbol)
-                    last = ticker.get("last")
-                    if last is not None and rounded * last < min_cost:
-                        return {"valid": False, "reason": "Notional below minimum cost"}
-                return {"valid": True, "rounded_quantity": rounded}
-            else:
+            if precision is None:
                 return {"valid": False, "reason": "No amount precision information"}
+
+            # گرد کردن به سمت پایین برای جلوگیری از افزایش ریسک
+            import decimal
+            d = decimal.Decimal(str(quantity))
+            step = decimal.Decimal(str(precision))
+            rounded = float(d.quantize(step, rounding=decimal.ROUND_DOWN))
+            if rounded <= 0:
+                return {"valid": False, "reason": "Quantity rounded to zero"}
+            if min_amount is not None and rounded < min_amount:
+                return {"valid": False, "reason": "Quantity below minimum"}
+            if min_cost is not None:
+                ticker = self.exchange.get_ticker(symbol)
+                last = ticker.get("last")
+                if last is not None and rounded * last < min_cost:
+                    return {"valid": False, "reason": "Notional below minimum"}
+            return {"valid": True, "rounded_quantity": rounded}
         except Exception as e:
             return {"valid": False, "reason": f"Quantity precision check failed: {str(e)}"}
 
@@ -188,14 +167,7 @@ class ExecutionEngine:
     # اجرای سفارش
     # ------------------------------------------------------------------
     def execute(self, signal: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        اجرای کامل سیگنال معتبر در صورت پاس شدن تمام گیت‌ها.
-
-        خروجی:
-            dict با ساختار مشخص شامل success, executed, reason و در صورت موفقیت،
-            شناسه سفارش‌ها و قیمت‌های محافظتی.
-        """
-        # 1. بررسی live
+        # GATE 0: Live trading
         if not self._is_live_enabled():
             return {
                 "success": False,
@@ -203,17 +175,25 @@ class ExecutionEngine:
                 "reason": "Live trading disabled",
             }
 
-        # 2. بررسی سیگنال
+        # GATE 1: Signal validity
         signal_check = self._validate_signal(signal)
         if not signal_check["valid"]:
-            return {
-                "success": False,
-                "executed": False,
-                "reason": signal_check["reason"],
-            }
+            return {"success": False, "executed": False, "reason": signal_check["reason"]}
         direction = signal_check["direction"]
 
-        # 3. بررسی قیمت‌ها
+        # GATE 2: Symbol/market validation
+        symbol = signal.get("symbol") or config.SYMBOL
+        try:
+            self.exchange.validate_perpetual_symbol(symbol)
+        except ValueError as e:
+            return {"success": False, "executed": False, "reason": str(e)}
+
+        # GATE 3: 24h volume eligibility
+        market_check = self._check_market_eligibility(symbol)
+        if not market_check["valid"]:
+            return {"success": False, "executed": False, "reason": market_check["reason"]}
+
+        # قیمت‌ها و حجم‌ها
         entry = signal.get("entry_price")
         sl = signal.get("stop_loss")
         tp = signal.get("take_profit")
@@ -221,61 +201,70 @@ class ExecutionEngine:
         if not price_check["valid"]:
             return {"success": False, "executed": False, "reason": price_check["reason"]}
 
-        # 4. بررسی حجم و ریسک
         position_size = signal.get("position_size")
         size_check = self._validate_position_size(position_size)
         if not size_check["valid"]:
             return {"success": False, "executed": False, "reason": size_check["reason"]}
 
         risk_amount = signal.get("risk_amount")
-        account_balance = config.ACCOUNT_BALANCE if hasattr(config, "ACCOUNT_BALANCE") else 1000.0
-        expected_risk = account_balance * config.RISK_PER_TRADE if hasattr(config, "RISK_PER_TRADE") else 0.0
-        risk_check = self._validate_risk_amount(risk_amount, expected_risk)
-        if not risk_check["valid"]:
-            return {"success": False, "executed": False, "reason": risk_check["reason"]}
+        if risk_amount is None:
+            return {"success": False, "executed": False, "reason": "Missing risk amount"}
 
         leverage = signal.get("leverage", config.LEVERAGE)
         lev_check = self._validate_leverage(leverage)
         if not lev_check["valid"]:
             return {"success": False, "executed": False, "reason": lev_check["reason"]}
 
-        symbol = signal.get("symbol") or config.SYMBOL
-        if not symbol:
-            return {"success": False, "executed": False, "reason": "Missing symbol"}
-
-        # 5. بازار و حجم
-        market_check = self._check_market_eligibility(symbol)
-        if not market_check["valid"]:
-            return {"success": False, "executed": False, "reason": market_check["reason"]}
-
-        # 6. بالانس
+        # GATE 5: بالانس
         balance_check = self._check_balance(risk_amount)
         if not balance_check["valid"]:
             return {"success": False, "executed": False, "reason": balance_check["reason"]}
 
-        # 7. پوزیشن‌های موجود
+        # GATE 6: پوزیشن‌های موجود
         position_check = self._check_existing_positions(symbol)
         if not position_check["valid"]:
             return {"success": False, "executed": False, "reason": position_check["reason"]}
 
-        # 8. دقت مقدار
+        # GATE 8: Risk validation
+        expected_risk = balance_check["balance"] * config.RISK_PER_TRADE
+        risk_check = self._validate_risk_amount(risk_amount, expected_risk)
+        if not risk_check["valid"]:
+            return {"success": False, "executed": False, "reason": risk_check["reason"]}
+
+        # GATE 10: Quantity precision
         precision_result = self._check_quantity_precision(symbol, position_size)
         if not precision_result["valid"]:
             return {"success": False, "executed": False, "reason": precision_result["reason"]}
         rounded_quantity = precision_result.get("rounded_quantity", position_size)
 
-        # 9. جلوگیری از سفارش تکراری (هش از سیگنال)
+        # Duplicate guard
         signal_hash = f"{symbol}:{direction}:{entry}:{sl}:{tp}:{rounded_quantity}"
         duplicate_check = self._check_duplicate_order(signal_hash)
         if not duplicate_check["valid"]:
             return {"success": False, "executed": False, "reason": duplicate_check["reason"]}
-
-        # 10. ثبت در نگهبان تکراری
         self._duplicate_guard.add(signal_hash)
 
-        # 11. ارسال سفارش ورود
+        # GATE 13: Final market eligibility re-check
+        final_market_check = self._check_market_eligibility(symbol)
+        if not final_market_check["valid"]:
+            self._duplicate_guard.discard(signal_hash)
+            return {"success": False, "executed": False, "reason": final_market_check["reason"]}
+
+        # GATE 14: Final balance re-check
+        final_balance_check = self._check_balance(risk_amount)
+        if not final_balance_check["valid"]:
+            self._duplicate_guard.discard(signal_hash)
+            return {"success": False, "executed": False, "reason": final_balance_check["reason"]}
+
+        # GATE 15: Final position re-check
+        final_position_check = self._check_existing_positions(symbol)
+        if not final_position_check["valid"]:
+            self._duplicate_guard.discard(signal_hash)
+            return {"success": False, "executed": False, "reason": final_position_check["reason"]}
+
+        # GATE 16: Submit entry order
+        order_side = "buy" if direction == "LONG" else "sell"
         try:
-            order_side = "buy" if direction == "LONG" else "sell"
             entry_order = self.exchange.exchange.create_order(
                 symbol=symbol,
                 type="market",
@@ -284,24 +273,30 @@ class ExecutionEngine:
                 params={"reduceOnly": False},
             )
         except Exception as e:
-            # در صورت خطا، نگهبان را پاک کن (چون سفارش ارسال نشد)
             self._duplicate_guard.discard(signal_hash)
+            # Ambiguous network error: check exchange state before returning
+            self._check_existing_positions(symbol)
             return {
                 "success": False,
                 "executed": False,
                 "reason": f"Entry order failed: {str(e)}",
             }
 
-        # 12. دریافت اطلاعات fill
+        # GATE 17: Verify entry result
         try:
             order_info = self.exchange.exchange.fetch_order(entry_order["id"], symbol)
+            status = order_info.get("status")
             filled = order_info.get("filled", 0)
             avg_price = order_info.get("average") or order_info.get("price")
-            status = order_info.get("status")
         except Exception:
-            filled = rounded_quantity  # فرض fill کامل اگر امکان دریافت نبود
-            avg_price = entry
-            status = "closed"
+            # If we cannot fetch order, assume failure
+            self._duplicate_guard.discard(signal_hash)
+            return {
+                "success": False,
+                "executed": False,
+                "reason": "Entry order verification failed",
+                "entry_order_id": entry_order.get("id"),
+            }
 
         if status == "rejected":
             return {
@@ -311,7 +306,7 @@ class ExecutionEngine:
                 "entry_order_id": entry_order.get("id"),
             }
 
-        if filled <= 0:
+        if status in ("canceled", "cancelled") or filled <= 0:
             return {
                 "success": False,
                 "executed": False,
@@ -319,20 +314,18 @@ class ExecutionEngine:
                 "entry_order_id": entry_order.get("id"),
             }
 
-        # 13. ارسال سفارش‌های محافظتی
         actual_entry = avg_price if avg_price is not None else entry
         actual_size = filled
 
-        # بررسی هندسه با قیمت واقعی
+        # Validate SL/TP against actual price
         if direction == "LONG":
             if not (sl < actual_entry < tp):
-                # وضعیت خطرناک؛ بستن فوری پوزیشن
-                return self._emergency_close(symbol, "LONG", actual_size, "Invalid SL/TP after fill")
+                return self._emergency_close(symbol, direction, actual_size, "Invalid SL/TP after fill")
         else:
             if not (tp < actual_entry < sl):
-                return self._emergency_close(symbol, "SHORT", actual_size, "Invalid SL/TP after fill")
+                return self._emergency_close(symbol, direction, actual_size, "Invalid SL/TP after fill")
 
-        # ارسال SL reduce-only
+        # GATE 18: Create SL
         try:
             sl_order = self.exchange.exchange.create_order(
                 symbol=symbol,
@@ -342,10 +335,9 @@ class ExecutionEngine:
                 params={"stopPrice": sl, "reduceOnly": True},
             )
         except Exception as e:
-            # تلاش برای بستن اضطراری
             return self._emergency_close(symbol, direction, actual_size, f"SL order failed: {str(e)}")
 
-        # ارسال TP reduce-only
+        # GATE 19: Create TP
         try:
             tp_order = self.exchange.exchange.create_order(
                 symbol=symbol,
@@ -355,10 +347,9 @@ class ExecutionEngine:
                 params={"stopPrice": tp, "reduceOnly": True},
             )
         except Exception as e:
-            # در صورت خطا، تلاش برای بستن اضطراری (SL ممکن است وجود داشته باشد)
             return self._emergency_close(symbol, direction, actual_size, f"TP order failed: {str(e)}")
 
-        # 14. موفقیت
+        # Success
         return {
             "success": True,
             "executed": True,
@@ -380,9 +371,6 @@ class ExecutionEngine:
     # بستن اضطراری
     # ------------------------------------------------------------------
     def _emergency_close(self, symbol: str, direction: str, size: float, reason: str) -> Dict[str, Any]:
-        """
-        تلاش برای بستن اضطراری پوزیشن با سفارش reduce-only مخالف جهت.
-        """
         opposite_side = "sell" if direction == "LONG" else "buy"
         try:
             close_order = self.exchange.exchange.create_order(
@@ -401,7 +389,6 @@ class ExecutionEngine:
                 "close_order_id": close_order.get("id"),
             }
         except Exception as e:
-            # خطای بحرانی
             return {
                 "success": False,
                 "executed": True,
