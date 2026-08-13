@@ -54,9 +54,9 @@ def validate_ohlcv(df: pd.DataFrame, timeframe: str) -> Dict[str, Any]:
                 issues.append(f"NaN in {col}")
         if "high" in df.columns and "low" in df.columns and "close" in df.columns and "open" in df.columns:
             if (df["high"] < df[["open", "close"]].max(axis=1)).any():
-                issues.append("high < max(open, close)")
+                issues.append("high < max")
             if (df["low"] > df[["open", "close"]].min(axis=1)).any():
-                issues.append("low > min(open, close)")
+                issues.append("low > min")
         if "volume" in df.columns and (df["volume"] < 0).any():
             issues.append("negative volume")
     return {"valid": len(issues) == 0, "issues": issues}
@@ -178,7 +178,6 @@ class HistoricalBacktestRunner:
             if end_date is not None and decision_time > end_date:
                 continue
 
-            # اگر پوزیشنی باز است، خروج احتمالی را بررسی کن
             if open_position is not None:
                 closed = self._try_exit(open_position, decision_time)
                 if closed:
@@ -191,7 +190,6 @@ class HistoricalBacktestRunner:
             candidates: List[Dict[str, Any]] = []
 
             for symbol in self.symbols:
-                # Volume historical / eligibility
                 volume = self.provider.get_volume_24h_usdt(symbol, decision_time)
                 if volume is None or volume < MIN_24H_VOLUME_USDT:
                     continue
@@ -246,12 +244,14 @@ class HistoricalBacktestRunner:
             best = ranked[0]
             self.selected_count += 1
 
-            # Safety: volume recheck, balance, no position
+            # Safety: volume recheck
             volume_now = self.provider.get_volume_24h_usdt(best["symbol"], decision_time)
             if volume_now is None or volume_now < MIN_24H_VOLUME_USDT:
                 self.safety_rejections += 1
                 continue
-            if self.current_balance <= 0:
+
+            # Safety: balance recheck
+            if self.current_balance < float(best.get("risk_amount", 0)):
                 self.safety_rejections += 1
                 continue
 
@@ -266,7 +266,6 @@ class HistoricalBacktestRunner:
                 self.safety_rejections += 1
                 continue
 
-            # اعمال slippage بر قیمت ورود
             if best["signal"] == "LONG":
                 fill_price = entry_price * (1 + self.slippage_rate)
             else:
@@ -286,11 +285,9 @@ class HistoricalBacktestRunner:
                 "regime_1h": best.get("regime_1h"),
             }
 
-        # بستن پوزیشن باز در پایان داده
         if open_position is not None:
             self._close_at_end(open_position, end_date)
 
-        # ساخت equity curve نهایی
         equity_times = []
         balances = []
         for trade in self.trades:
@@ -347,7 +344,6 @@ class HistoricalBacktestRunner:
                 )]
             regime_metrics[regime_name] = _metrics_for(regime_trades)
 
-        # بازه‌های زمانی ماهانه
         period_metrics = {}
         for trade in self.trades:
             month_key = trade["exit_time"].strftime("%Y-%m") if trade["exit_time"] else "unknown"
@@ -457,7 +453,6 @@ class HistoricalBacktestRunner:
         else:
             pnl = (entry - exit_price) * size
 
-        # کسر fee
         fee = self.fee_rate * abs(pnl) if pnl > 0 else 0.0
         pnl -= fee
 
