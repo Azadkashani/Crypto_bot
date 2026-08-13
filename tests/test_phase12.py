@@ -181,7 +181,6 @@ def test_1h_data_remains_independent(monkeypatch):
     data_4h = _make_data_4h(10)
     result = run_walk_forward(data_5m, data_1h, data_4h, 10, 5)
     assert result["aggregated"]["total_windows"] > 0
-    # اطمینان از عدم تغییر دیتافریم‌ها
     assert data_1h.index.is_monotonic_increasing
     assert data_1h.index.duplicated().sum() == 0
 
@@ -202,9 +201,7 @@ def test_validation_results_only_cover_test_periods(monkeypatch):
     data_1h = _make_data_1h(20)
     data_4h = _make_data_4h(10)
     result = run_walk_forward(data_5m, data_1h, data_4h, 10, 5)
-    # پنجره اول: test از ایندکس 10 تا 14 => 5 معامله
     assert result["windows"][0]["total_trades"] == 5
-    # تست بعدی: 5 معامله دیگر
     assert result["windows"][1]["total_trades"] == 5
 
 
@@ -214,8 +211,7 @@ def test_warmup_context_not_count_as_validation_trades(monkeypatch):
     data_1h = _make_data_1h(10)
     data_4h = _make_data_4h(5)
     result = run_walk_forward(data_5m, data_1h, data_4h, 10, 5)
-    # بازه warm-up شامل 10 کندل است که معامله در آن نباید شمرده شود
-    assert result["windows"][0]["total_trades"] == 5  # فقط test
+    assert result["windows"][0]["total_trades"] == 5
     assert result["windows"][0]["test_candles"] == 5
 
 
@@ -242,7 +238,7 @@ def test_multiple_validation_windows(monkeypatch):
     data_1h = _make_data_1h(30)
     data_4h = _make_data_4h(15)
     result = run_walk_forward(data_5m, data_1h, data_4h, 20, 5)
-    assert result["aggregated"]["total_windows"] == 6  # (50-20)/5 = 6
+    assert result["aggregated"]["total_windows"] == 6
     assert result["aggregated"]["total_trades"] == 30
 
 
@@ -276,17 +272,19 @@ def test_profitable_window_ratio(monkeypatch):
 
 def test_best_worst_window_detection(monkeypatch):
     class MixedEngine:
+        # شمارندهٔ مشترک بین نمونه‌ها برای تولید نتایج متفاوت
+        _counter = 0
+        pnl_values = [1.0, 5.0, -2.0, 3.0, 1.0, 5.0]
+
         def __init__(self, data_5m, data_1h, data_4h, initial_balance):
             self.data_5m = data_5m
-            self.counter = 0
 
         def run(self):
-            self.counter += 1
-            pnl_values = [1.0, 5.0, -2.0, 3.0, 1.0, 5.0]
-            pnl = pnl_values[(self.counter - 1) % len(pnl_values)]
+            MixedEngine._counter += 1
+            pnl = MixedEngine.pnl_values[(MixedEngine._counter - 1) % len(MixedEngine.pnl_values)]
             trades = []
             if pnl != 0:
-                entry_time = self.data_5m.index[-1]  # آخرین کندل برش‌خورده (داخل test)
+                entry_time = self.data_5m.index[-1]  # داخل بازهٔ test
                 trades = [{
                     "entry_time": entry_time,
                     "exit_time": entry_time + timedelta(minutes=5),
@@ -330,7 +328,6 @@ def test_no_future_validation_data_leakage(monkeypatch):
     data_4h = _make_data_4h(10)
     run_walk_forward(data_5m, data_1h, data_4h, 10, 5)
 
-    # اولین پنجره: test_end = 14 => slice_5m شامل 15 کندل (0..14)
     assert captured_slices[0]["5m_last"] == data_5m.index[14]
     assert captured_slices[0]["5m_len"] == 15
 
@@ -355,7 +352,7 @@ def test_realistic_multi_window_scenario(monkeypatch):
         def run(self):
             trades = []
             for i, ts in enumerate(self.data_5m.index):
-                if i % 2 == 0:  # نصف کندل‌ها معامله
+                if i % 2 == 0:
                     pnl = 1.0 if i % 4 == 0 else -0.5
                     trades.append({
                         "entry_time": ts,
