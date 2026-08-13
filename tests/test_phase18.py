@@ -30,6 +30,8 @@ class FakeHistoricalDataProvider(HistoricalDataProvider):
         self.volume = {sym: 5_000_000.0 for sym in symbols}
 
     def set_data(self, symbol, timeframe, df):
+        if symbol not in self.data:
+            self.data[symbol] = {}
         self.data[symbol][timeframe] = df
 
     def get_ohlcv(self, symbol, timeframe, start=None, end=None):
@@ -48,7 +50,7 @@ class FakeHistoricalDataProvider(HistoricalDataProvider):
 
 @pytest.fixture
 def fake_provider():
-    syms = ["BTC/USDT:USDT", "ETH/USDT:USDT"]
+    syms = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"]
     provider = FakeHistoricalDataProvider(syms)
     for sym in syms:
         provider.set_data(sym, '4h', _make_ohlcv(100, '4h'))
@@ -138,8 +140,8 @@ def test_dynamic_balance(fake_provider, monkeypatch):
                             "risk_reward": 2.0, "symbol": kwargs.get("symbol"),
                         })
     provider = fake_provider
-    provider.volume = {"BTC/USDT:USDT": 2_000_000, "ETH/USDT:USDT": 5_000_000}
-    runner = HistoricalBacktestRunner(provider, ["BTC/USDT:USDT", "ETH/USDT:USDT"])
+    provider.volume = {"BTC/USDT:USDT": 2_000_000, "ETH/USDT:USDT": 5_000_000, "SOL/USDT:USDT": 5_000_000}
+    runner = HistoricalBacktestRunner(provider, ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"])
     runner.current_balance = 1000
     runner._close_position(
         {"symbol": "BTC/USDT:USDT", "direction": "LONG", "entry_price": 100,
@@ -195,7 +197,7 @@ def test_multi_signal_ranking(fake_provider, monkeypatch):
                             "volume_24h_usdt": 2_000_000 if symbol=="BTC/USDT:USDT" else 5_000_000,
                         })
     provider = fake_provider
-    provider.volume = {"BTC/USDT:USDT": 2_000_000, "ETH/USDT:USDT": 5_000_000}
+    provider.volume = {"BTC/USDT:USDT": 2_000_000, "ETH/USDT:USDT": 5_000_000, "SOL/USDT:USDT": 5_000_000}
     for sym in ["BTC/USDT:USDT", "ETH/USDT:USDT"]:
         provider.set_data(sym, '5m', _make_ohlcv(1, '5min'))
         provider.set_data(sym, '1h', _make_ohlcv(1, '1h'))
@@ -219,9 +221,9 @@ def test_deterministic_ranking(fake_provider, monkeypatch):
                             "volume_24h_usdt": 2_000_000,
                         })
     provider = fake_provider
-    provider.volume = {"BTC/USDT:USDT": 2_000_000, "ETH/USDT:USDT": 5_000_000}
-    r1 = HistoricalBacktestRunner(provider, ["BTC/USDT:USDT", "ETH/USDT:USDT"]).run()
-    r2 = HistoricalBacktestRunner(provider, ["BTC/USDT:USDT", "ETH/USDT:USDT"]).run()
+    provider.volume = {"BTC/USDT:USDT": 2_000_000, "ETH/USDT:USDT": 5_000_000, "SOL/USDT:USDT": 5_000_000}
+    r1 = HistoricalBacktestRunner(provider, ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"]).run()
+    r2 = HistoricalBacktestRunner(provider, ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"]).run()
     assert r1["metrics"] == r2["metrics"]
 
 
@@ -347,7 +349,6 @@ def test_candidate_accounting(fake_provider, monkeypatch):
                             "volume_24h_usdt": 2_000_000,
                         })
     provider = fake_provider
-    # فقط یک کندل برای هر timeframe، اما 3 Symbol
     symbols = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"]
     for sym in symbols:
         provider.set_data(sym, '5m', _make_ohlcv(1, '5min'))
