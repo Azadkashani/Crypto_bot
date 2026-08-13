@@ -66,7 +66,6 @@ def _has_valid_price_geometry(signal: Dict[str, Any]) -> bool:
     sl = signal.get("stop_loss")
     tp = signal.get("take_profit")
 
-    # مقادیر باید عددی و مثبت باشند
     try:
         entry = float(entry)
         sl = float(sl)
@@ -263,14 +262,17 @@ def rank_signals(signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             copied["score"] = score
             ranked.append(copied)
 
-    ranked.sort(
-        key=lambda item: (
-            -item.get("score", 0.0),
-            -float(item.get("risk_reward", 0.0) or 0.0),
-            -(_extract_volume(item) if _extract_volume(item) is not None else 0.0),
-            item.get("symbol", "").lower(),
-        )
-    )
+    # برای اطمینان از استفاده درست از حجم، مستقیماً حجم را از کلیدهای شناخته‌شده استخراج می‌کنیم
+    def _sort_key(item):
+        score = item.get("score", 0.0)
+        rr = item.get("risk_reward")
+        rr = float(rr) if rr is not None else -1.0
+        vol = _extract_volume(item)
+        vol = vol if vol is not None else -1.0
+        sym = item.get("symbol", "")
+        return (-score, -rr, -vol, sym.lower())
+
+    ranked.sort(key=_sort_key)
 
     return ranked
 
