@@ -96,7 +96,7 @@ class FakeExchange:
         if vol is None:
             return {"eligible": False, "reason": "unavailable"}
         if vol < MIN_24H_VOLUME_USDT:
-            return {"eligible": False, "reason": "below minimum"}
+            return {"eligible": False, "reason": "24h volume below minimum threshold"}
         return {"eligible": True, "volume_24h_usdt": vol}
 
     def get_balance(self):
@@ -133,12 +133,18 @@ class FakeExchange:
 
 
 @pytest.fixture
-def fake_gate(monkeypatch):
-    """ساخت یک GateExchange واقعی با FakeExchange به‌عنوان موتور ccxt."""
-    fake_ccxt = FakeExchange()
-    monkeypatch.setattr(gate_exchange.ccxt, "gate", lambda options: fake_ccxt)
+def fake_ccxt(monkeypatch):
+    """Fixture که ccxt.gate را با FakeExchange جایگزین می‌کند."""
+    fake = FakeExchange()
+    monkeypatch.setattr(gate_exchange.ccxt, "gate", lambda options: fake)
+    return fake
+
+
+@pytest.fixture
+def fake_gate(fake_ccxt):
+    """یک GateExchange واقعی بدون load_markets."""
     adapter = GateExchange()
-    adapter.load_markets()
+    adapter.exchange = fake_ccxt  # در صورت نیاز
     return adapter
 
 
@@ -183,7 +189,7 @@ def test_live_trading_disabled_no_order(fake_gate, valid_long_signal):
     result = engine.execute(valid_long_signal)
     assert result["executed"] is False
     assert "Live trading disabled" in result["reason"]
-    # هیچ فراخوانی به صرافی نشود
+    # هیچ فراخوانی به صرافی نشده باشد
     assert fake_gate.exchange.calls == []
 
 
@@ -201,7 +207,7 @@ def test_invalid_symbol_no_order(fake_gate, valid_long_signal):
     valid_long_signal["symbol"] = "UNKNOWN/USDT:USDT"
     result = engine.execute(valid_long_signal)
     assert result["executed"] is False
-    assert "Market eligibility" in result["reason"] or "Symbol" in result["reason"]
+    assert "Market eligibility" in result["reason"] or "Symbol not found" in result["reason"]
 
 
 def test_spot_symbol_no_order(fake_gate, valid_long_signal):
@@ -212,7 +218,6 @@ def test_spot_symbol_no_order(fake_gate, valid_long_signal):
 
 
 def test_non_perpetual_no_order(fake_gate, valid_long_signal):
-    # تغییر ETH به non-perpetual
     fake_gate.markets["ETH/USDT:USDT"]["swap"] = False
     fake_gate.markets["ETH/USDT:USDT"]["contract"] = False
     engine = ExecutionEngine(fake_gate, live_trading_enabled=True)
@@ -256,6 +261,7 @@ def test_unavailable_volume_no_order(fake_gate, valid_long_signal):
     engine = ExecutionEngine(fake_gate, live_trading_enabled=True)
     result = engine.execute(valid_long_signal)
     assert result["executed"] is False
+    assert "unavailable" in result["reason"]
 
 
 def test_invalid_signal_no_order(fake_gate):
@@ -380,7 +386,7 @@ def test_duplicate_execution_no_duplicate_order(fake_gate, valid_long_signal):
     second = engine.execute(valid_long_signal)
     assert second["executed"] is False
     assert "Duplicate" in second["reason"]
-    assert len(fake_gate.exchange.orders) == 3  # entry + SL + TP
+    assert len(fake_gate.exchange.orders) == 3
 
 
 def test_leverage_above_configured_max_no_order(fake_gate, valid_long_signal):
@@ -502,7 +508,7 @@ def test_ambiguous_network_error_no_blind_retry(fake_gate, valid_long_signal):
     engine = ExecutionEngine(fake_gate, live_trading_enabled=True)
     result = engine.execute(valid_long_signal)
     assert result["executed"] is False
-    assert len(calls) == 1  # فقط یک بار create_order
+    assert len(calls) == 1
 
 
 def test_existing_exchange_state_checked_after_ambiguous_error(fake_gate, valid_long_signal):
@@ -627,7 +633,7 @@ def test_emergency_close_never_increases_position(fake_gate, valid_long_signal):
     engine = ExecutionEngine(fake_gate, live_trading_enabled=True)
     engine.execute(valid_long_signal)
     close_order = fake_gate.exchange.orders[-1]
-    assert close_order["amount"] == 0.01  # حجم پر شده
+    assert close_order["amount"] == 0.01
 
 
 def test_no_credentials_appear_in_returned_error(fake_gate, valid_long_signal):
@@ -646,7 +652,6 @@ def test_no_credentials_in_logs_or_result(fake_gate, valid_long_signal):
 
 
 def test_no_order_submitted_when_market_eligibility_changes_below_1m(fake_gate, valid_long_signal):
-    # ابتدا حجم بالا، سپس در زمان اجرا volume پایین
     engine = ExecutionEngine(fake_gate, live_trading_enabled=True)
     def low_volume_ticker(symbol):
         ticker = fake_gate.exchange.tickers[symbol].copy()
