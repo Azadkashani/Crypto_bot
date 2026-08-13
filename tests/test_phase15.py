@@ -142,9 +142,9 @@ def fake_ccxt(monkeypatch):
 
 @pytest.fixture
 def fake_gate(fake_ccxt):
-    """یک GateExchange واقعی بدون load_markets."""
+    """یک GateExchange واقعی با FakeExchange به عنوان موتور ccxt."""
     adapter = GateExchange()
-    adapter.exchange = fake_ccxt  # در صورت نیاز
+    adapter.exchange = fake_ccxt
     return adapter
 
 
@@ -189,12 +189,10 @@ def test_live_trading_disabled_no_order(fake_gate, valid_long_signal):
     result = engine.execute(valid_long_signal)
     assert result["executed"] is False
     assert "Live trading disabled" in result["reason"]
-    # هیچ فراخوانی به صرافی نشده باشد
     assert fake_gate.exchange.calls == []
 
 
 def test_live_enabled_but_credentials_missing_no_order(fake_gate, valid_long_signal):
-    # بدون credentials، get_balance باید PermissionError بدهد
     fake_gate.options = {"defaultType": "swap"}
     engine = ExecutionEngine(fake_gate, live_trading_enabled=True)
     result = engine.execute(valid_long_signal)
@@ -386,7 +384,7 @@ def test_duplicate_execution_no_duplicate_order(fake_gate, valid_long_signal):
     second = engine.execute(valid_long_signal)
     assert second["executed"] is False
     assert "Duplicate" in second["reason"]
-    assert len(fake_gate.exchange.orders) == 3
+    assert len(fake_gate.exchange.orders) == 3  # entry + SL + TP
 
 
 def test_leverage_above_configured_max_no_order(fake_gate, valid_long_signal):
@@ -457,8 +455,9 @@ def test_actual_fill_price_is_captured(fake_gate, valid_long_signal):
 
 
 def test_partial_fill_handled(fake_gate, valid_long_signal):
+    original_fetch = fake_gate.exchange.fetch_order
     def custom_fetch_order(order_id, symbol):
-        order = fake_gate.exchange.fetch_order(order_id, symbol)
+        order = original_fetch(order_id, symbol)
         order["filled"] = 0.005
         order["average"] = 50000.0
         return order
@@ -472,8 +471,9 @@ def test_partial_fill_handled(fake_gate, valid_long_signal):
 
 
 def test_canceled_order_handled(fake_gate, valid_long_signal):
+    original_fetch = fake_gate.exchange.fetch_order
     def custom_fetch_order(order_id, symbol):
-        order = fake_gate.exchange.fetch_order(order_id, symbol)
+        order = original_fetch(order_id, symbol)
         order["status"] = "canceled"
         order["filled"] = 0
         return order
@@ -485,8 +485,9 @@ def test_canceled_order_handled(fake_gate, valid_long_signal):
 
 
 def test_rejected_order_handled(fake_gate, valid_long_signal):
+    original_fetch = fake_gate.exchange.fetch_order
     def custom_fetch_order(order_id, symbol):
-        order = fake_gate.exchange.fetch_order(order_id, symbol)
+        order = original_fetch(order_id, symbol)
         order["status"] = "rejected"
         return order
     fake_gate.exchange.fetch_order = custom_fetch_order
