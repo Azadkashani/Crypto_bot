@@ -1,4 +1,3 @@
-# strategy.py (نسخه کامل با ادغام Position Sizing)
 """
 موتور سیگنال نهایی بر اساس رژیم 4H/1H و پولبک 5M.
 ترتیب الزامی: RSI → CHOCH → BOS → Risk Gate → Position Sizing.
@@ -34,6 +33,7 @@ def generate_signal(
     df_1h: pd.DataFrame,
     df_5m: pd.DataFrame,
     as_of: pd.Timestamp = None,
+    account_balance: float = None,
 ) -> dict:
     """
     تولید سیگنال LONG/SHORT بر اساس توالی تأییدشده، اعتبارسنجی ریسک و حجم معامله.
@@ -44,10 +44,15 @@ def generate_signal(
         df_5m: دیتافریم ۵ دقیقه‌ای.
         as_of: (اختیاری) زمان تصمیم‌گیری. اگر None باشد،
               هر تایم‌فریم به‌صورت مستقل با آخرین دادهٔ بسته‌شده در نظر گرفته می‌شود.
+        account_balance: (اختیاری) بالانس حساب برای Position Sizing.
+                        اگر None باشد از config.ACCOUNT_BALANCE استفاده می‌شود.
 
     خروجی:
         dict شامل signal, valid, reason و اطلاعات کامل ریسک و حجم.
     """
+
+    if account_balance is None:
+        account_balance = config.ACCOUNT_BALANCE
 
     def _filter_closed(df: pd.DataFrame, tf: str) -> pd.DataFrame:
         """فقط کندل‌هایی را برمی‌گرداند که در زمان as_of کاملاً بسته شده‌اند."""
@@ -237,7 +242,7 @@ def generate_signal(
 
     # 6) Position Sizing
     position_result = calculate_position_size(
-        account_balance=config.ACCOUNT_BALANCE,
+        account_balance=account_balance,
         risk_per_trade=config.RISK_PER_TRADE,
         entry_price=risk_result["entry_price"],
         stop_loss=risk_result["stop_loss"],
