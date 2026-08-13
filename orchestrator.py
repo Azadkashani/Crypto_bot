@@ -1,5 +1,14 @@
 """
 Orchestrator چندنمادی و Safety Layer نهایی.
+
+این ماژول وظیفه دارد:
+    - چند Symbol را بررسی کند.
+    - سیگنال‌های معتبر را جمع‌آوری کند.
+    - از scoring و ranking موجود فاز ۱۶ استفاده کند.
+    - یک Safety Gate نهایی قبل از ExecutionEngine اعمال کند.
+    - فقط بهترین سیگنال را برای اجرا ارسال کند.
+
+هیچ سفارشی در این ماژول ارسال نمی‌شود مگر از طریق ExecutionEngine موجود.
 """
 
 from __future__ import annotations
@@ -13,25 +22,56 @@ import signal_scoring
 
 
 class MultiSymbolOrchestrator:
-    def __init__(self, exchange, execution_engine=None, live_trading_enabled: bool = False):
+    """
+    ارکستراتور چندنمادی برای جمع‌آوری، امتیازدهی و انتخاب بهترین سیگنال.
+    """
+
+    def __init__(
+        self,
+        exchange,
+        execution_engine=None,
+        live_trading_enabled: bool = False,
+    ):
         self.exchange = exchange
         self.execution_engine = execution_engine
         self.live_trading_enabled = live_trading_enabled
         self._executed_hashes = set()
 
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
     def _is_market_eligible(self, symbol: str) -> Dict[str, Any]:
         return self.exchange.is_market_eligible(symbol)
 
-    def _get_ohlcv(self, symbol: str, timeframe: str, as_of: Optional[pd.Timestamp] = None) -> pd.DataFrame:
-        return self.exchange.get_ohlcv(symbol, timeframe, limit=500, closed_only=True, current_time=as_of)
+    def _get_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str,
+        as_of: Optional[pd.Timestamp] = None,
+    ) -> pd.DataFrame:
+        return self.exchange.get_ohlcv(
+            symbol,
+            timeframe,
+            limit=500,
+            closed_only=True,
+            current_time=as_of,
+        )
 
-    def _process_symbol(self, symbol: str, as_of: Optional[pd.Timestamp] = None) -> Optional[Dict[str, Any]]:
+    def _process_symbol(
+        self,
+        symbol: str,
+        as_of: Optional[pd.Timestamp] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        بررسی کامل یک Symbol:
+            Market eligibility → Data → Strategy → Scoring
+        """
         eligibility = self._is_market_eligible(symbol)
         if not eligibility.get("eligible"):
             return None
 
-        volume = eligibility.get("volume_24h_usdt")
-        if volume is None:
+        exchange_volume = eligibility.get("volume_24h_usdt")
+        if exchange_volume is None:
             return None
 
         try:
@@ -39,6 +79,7 @@ class MultiSymbolOrchestrator:
             df_1h = self._get_ohlcv(symbol, config.TIMEFRAME_1H, as_of)
             df_5m = self._get_ohlcv(symbol, config.TIMEFRAME_5M, as_of)
         except Exception:
+            # خطای داده یک Symbol نباید کل اسکن را متوقف کند
             return None
 
         signal = strategy.generate_signal(
@@ -55,7 +96,12 @@ class MultiSymbolOrchestrator:
         if signal.get("signal") not in ("LONG", "SHORT"):
             return None
 
-        candidate = {**signal, "symbol": symbol, "volume_24h_usdt": volume}
+        # اگر سیگنال حجم ندارد، از حجم صرافی استفاده کن
+        if "volume_24h_usdt" not in signal or signal.get("volume_24h_usdt") is None:
+            signal["volume_24h_usdt"] = exchange_volume
+
+        candidate = {**signal, "symbol": symbol}
+
         score = signal_scoring.calculate_score(candidate)
         if score is None:
             return None
@@ -64,8 +110,10 @@ class MultiSymbolOrchestrator:
         return candidate
 
     def _safety_recheck(self, best: Dict[str, Any]) -> tuple[bool, str]:
+        """Safety Gate نهایی قبل از ارسال سفارش."""
         symbol = best.get("symbol")
 
+        # Market recheck
         eligibility = self._is_market_eligible(symbol)
         if not eligibility.get("eligible"):
             return False, "Market eligibility failed"
@@ -73,6 +121,7 @@ class MultiSymbolOrchestrator:
         if volume is None or volume < signal_scoring.MIN_24H_VOLUME_USDT:
             return False, "Volume below minimum threshold"
 
+        # Balance recheck
         try:
             balance = self.exchange.get_balance()
             total = balance.get("total")
@@ -83,6 +132,7 @@ class MultiSymbolOrchestrator:
         except Exception as e:
             return False, f"Balance check failed: {e}"
 
+        # Position recheck
         try:
             positions = self.exchange.get_positions()
             for pos in positions:
@@ -91,6 +141,7 @@ class MultiSymbolOrchestrator:
         except Exception as e:
             return False, f"Position check failed: {e}"
 
+        # Risk recheck
         entry = best.get("entry_price")
         sl = best.get("stop_loss")
         tp = best.get("take_profit")
@@ -116,13 +167,27 @@ class MultiSymbolOrchestrator:
             if not (tp < entry < sl):
                 return False, "Invalid SHORT price geometry"
 
+        # Duplicate protection
         signal_hash = f"{symbol}:{best['signal']}:{entry}:{sl}:{tp}:{size}"
         if signal_hash in self._executed_hashes:
             return False, "Duplicate order detected"
 
         return True, signal_hash
 
-    def run(self, symbols: List[str], as_of: Optional[pd.Timestamp] = None) -> Dict[str, Any]:
+    # ------------------------------------------------------------------
+    # اجرای اصلی
+    # ------------------------------------------------------------------
+    def run(
+        self,
+        symbols: List[str],
+        as_of: Optional[pd.Timestamp] = None,
+    ) -> Dict[str, Any]:
+        """
+        اسکن چند Symbol، انتخاب بهترین سیگنال و اجرای امن آن.
+
+        خروجی:
+            dict شامل success, signal, symbol, score, reason, candidates_count, candidates
+        """
         candidates: List[Dict[str, Any]] = []
 
         for symbol in symbols:
