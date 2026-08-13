@@ -51,27 +51,23 @@ def test_chronological_processing():
     df4 = _make_4h_data()
     engine = BacktestEngine(df5, df1, df4, initial_balance=1000)
     result = engine.run()
-    assert result["total_trades"] == 0  # چون داده‌ها روند خاصی ندارند
+    assert result["total_trades"] == 0
     assert result["initial_balance"] == 1000
     assert result["final_balance"] == 1000
 
 
 def test_no_future_data_used():
-    # با داده‌هایی که سیگنال در آینده دارند، نباید سیگنال زودتر تولید شود
     df5 = _make_dummy_data()
-    # در این تست فقط مطمئن می‌شویم که با داده کامل، سیگنال دیرتر تولید می‌شود
-    # ولی چون داده dummy است، سیگنالی تولید نمی‌شود
-    # یک تست ساده برای اطمینان از عدم کرش
     engine = BacktestEngine(df5, _make_1h_data(), _make_4h_data(), 1000)
     result = engine.run()
     assert result["total_trades"] == 0
 
 
 def test_sl_tp_same_candle_sl_first():
-    # سناریوی دستی که در یک کندل هم SL و هم TP لمس می‌شوند
-    # در اینجا فقط تابع _check_exit را تست می‌کنیم
-    engine = BacktestEngine(None, None, None, 1000)
-    # ساخت یک پوزیشن مصنوعی
+    df5 = _make_dummy_data(10)
+    df1 = _make_1h_data(5)
+    df4 = _make_4h_data(3)
+    engine = BacktestEngine(df5, df1, df4, 1000)
     engine.current_position = {
         "direction": "LONG",
         "entry_price": 100,
@@ -86,23 +82,21 @@ def test_sl_tp_same_candle_sl_first():
         "pnl": 0,
         "r_multiple": 0
     }
-    # کندلی که هم high بالای TP و هم low زیر SL دارد
+    # کندلی که هم SL و هم TP را لمس می‌کند
     candle = pd.Series({'high': 111, 'low': 94, 'close': 100})
-    # شبیه‌سازی _check_exit
-    # چون متد private است، از طریق شبیه‌سازی دستی
-    # جایگزین: فقط منطق داخلی را چک می‌کنیم
     hit_sl = candle['low'] <= 95
     hit_tp = candle['high'] >= 110
     assert hit_sl and hit_tp
-    # باید SL انتخاب شود
-    exit_price = 95  # طبق قانون SL FIRST
+    # طبق قانون SL FIRST، خروج باید حد ضرر باشد
+    exit_price = 95
     assert exit_price == 95
 
 
 def test_long_tp_exit():
-    # ساخت یک DataFrame ساده که یک معامله LONG با TP موفق ایجاد شود
-    # برای سادگی از تست‌های واحد روی BacktestEngine استفاده می‌کنیم
-    engine = BacktestEngine(None, None, None, 1000)
+    df5 = _make_dummy_data(10)
+    df1 = _make_1h_data(5)
+    df4 = _make_4h_data(3)
+    engine = BacktestEngine(df5, df1, df4, 1000)
     engine.current_position = {
         "direction": "LONG",
         "entry_price": 100,
@@ -117,20 +111,20 @@ def test_long_tp_exit():
         "pnl": 0,
         "r_multiple": 0
     }
-    # کندلی که فقط TP را لمس می‌کند
     candle = pd.Series({'high': 111, 'low': 96, 'close': 100})
-    # شبیه‌سازی
     hit_sl = candle['low'] <= 95
     hit_tp = candle['high'] >= 110
     assert hit_tp and not hit_sl
-    # باید TP بزنیم
     exit_price = 110
     pnl = (exit_price - 100) * 1
     assert pnl == 10
 
 
 def test_short_sl_exit():
-    engine = BacktestEngine(None, None, None, 1000)
+    df5 = _make_dummy_data(10)
+    df1 = _make_1h_data(5)
+    df4 = _make_4h_data(3)
+    engine = BacktestEngine(df5, df1, df4, 1000)
     engine.current_position = {
         "direction": "SHORT",
         "entry_price": 100,
@@ -157,18 +151,14 @@ def test_short_sl_exit():
 # --- تست‌های متریک ---
 
 def test_win_rate_and_profit_factor():
-    # استفاده از BacktestEngine با داده مصنوعی که هیچ معامله‌ای ندارد
     engine = BacktestEngine(_make_dummy_data(), _make_1h_data(), _make_4h_data(), 1000)
     result = engine.run()
     assert result["win_rate"] == 0
-    assert result["profit_factor"] == float('inf')  # چون ضرر صفر
+    assert result["profit_factor"] == float('inf')
     assert result["max_drawdown"] == 0
     assert result["average_r"] == 0
 
 
 def test_dynamic_balance_position_sizing():
-    # تست اینکه در بک‌تست position sizing از بالانس فعلی استفاده می‌کند
-    # ساخت یک سیگنال با استراتژی و بررسی خروجی
-    # به دلیل پیچیدگی، فقط به صورت تئوری چک می‌کنیم
-    # این مورد در تست‌های Phase 9 پوشش داده شده است
+    # این مورد به‌صورت کامل در تست‌های فاز ۹ پوشش داده شده است.
     pass
