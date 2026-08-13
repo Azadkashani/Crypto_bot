@@ -1,7 +1,7 @@
-# strategy.py (نسخه کامل با ادغام Risk Gate)
+# strategy.py (نسخه کامل با ادغام Position Sizing)
 """
 موتور سیگنال نهایی بر اساس رژیم 4H/1H و پولبک 5M.
-ترتیب الزامی: RSI → CHOCH → BOS → Risk Gate.
+ترتیب الزامی: RSI → CHOCH → BOS → Risk Gate → Position Sizing.
 """
 
 import pandas as pd
@@ -12,6 +12,7 @@ import choch
 import bos
 import config
 from risk_gate import evaluate_risk
+from position_sizing import calculate_position_size
 
 
 def _timeframe_to_timedelta(tf: str) -> timedelta:
@@ -35,7 +36,7 @@ def generate_signal(
     as_of: pd.Timestamp = None,
 ) -> dict:
     """
-    تولید سیگنال LONG/SHORT بر اساس توالی تأییدشده و اعتبارسنجی ریسک.
+    تولید سیگنال LONG/SHORT بر اساس توالی تأییدشده، اعتبارسنجی ریسک و حجم معامله.
 
     پارامترها:
         df_4h: دیتافریم ۴ ساعته.
@@ -45,7 +46,7 @@ def generate_signal(
               هر تایم‌فریم به‌صورت مستقل با آخرین دادهٔ بسته‌شده در نظر گرفته می‌شود.
 
     خروجی:
-        dict شامل signal, valid, reason و اطلاعات لازم.
+        dict شامل signal, valid, reason و اطلاعات کامل ریسک و حجم.
     """
 
     def _filter_closed(df: pd.DataFrame, tf: str) -> pd.DataFrame:
@@ -234,6 +235,28 @@ def generate_signal(
             "bos": True,
         }
 
+    # 6) Position Sizing
+    position_result = calculate_position_size(
+        account_balance=config.ACCOUNT_BALANCE,
+        risk_per_trade=config.RISK_PER_TRADE,
+        entry_price=risk_result["entry_price"],
+        stop_loss=risk_result["stop_loss"],
+        leverage=config.LEVERAGE,
+    )
+
+    if not position_result["valid"]:
+        return {
+            "signal": "NONE",
+            "valid": False,
+            "reason": f"Position sizing: {position_result['reason']}",
+            "regime_4h": r4h,
+            "regime_1h": r1h,
+            "rsi_5m": round(rsi_series.iloc[-1], 2),
+            "rsi_recovery": True,
+            "choch": True,
+            "bos": True,
+        }
+
     latest_5m = df_5m_closed.index[-1]
     latest_rsi = rsi_series.iloc[-1]
 
@@ -252,5 +275,11 @@ def generate_signal(
         "stop_loss": risk_result["stop_loss"],
         "take_profit": risk_result["take_profit"],
         "risk_reward": risk_result["risk_reward"],
+        "risk_amount": position_result["risk_amount"],
+        "stop_distance": position_result["stop_distance"],
+        "position_size": position_result["position_size"],
+        "position_value": position_result["position_value"],
+        "margin_required": position_result["margin_required"],
+        "leverage": position_result["leverage"],
         "timestamp": latest_5m,
     }
