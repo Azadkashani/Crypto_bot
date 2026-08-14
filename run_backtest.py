@@ -31,13 +31,10 @@ from historical_backtest import HistoricalBacktestRunner, HistoricalDataProvider
 # ---------------------------------------------------------------
 # تنظیمات بک‌تست
 # ---------------------------------------------------------------
-# بازه پیش‌فرض: ۳۰ روز گذشته تا آخرین کندل کامل ۴ ساعته
-# چون Gate.io فقط ۱۰,۰۰۰ کندل اخیر ۵ دقیقه‌ای را می‌دهد (~۳۴ روز)
 NOW = pd.Timestamp.now(tz='UTC')
-BACKTEST_END = NOW.floor('4h') - pd.Timedelta(hours=4)   # آخرین کندل کامل 4h
+BACKTEST_END = NOW.floor('4h') - pd.Timedelta(hours=4)
 BACKTEST_START = BACKTEST_END - pd.Timedelta(days=30)
 
-# امکان override با متغیر محیطی
 if os.getenv("BACKTEST_START"):
     BACKTEST_START = pd.Timestamp(os.getenv("BACKTEST_START"))
 if os.getenv("BACKTEST_END"):
@@ -59,7 +56,6 @@ INITIAL_BALANCE = 1000.0
 FEE_RATE = 0.0005
 SLIPPAGE_RATE = 0.0002
 
-# تعداد کندل‌های موردنیاز برای warm-up پیش از شروع بک‌تست
 WARMUP_BARS = {
     "5m": 500,
     "1h": 300,
