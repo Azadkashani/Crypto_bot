@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pandas as pd
 import numpy as np
+from datetime import timezone
 from typing import List, Dict, Any, Optional, Tuple
 
 import config
@@ -168,7 +169,6 @@ class OptimizedBacktestRunner:
         arr = data.get(key)
         if arr is None or len(arr) == 0:
             return None
-        # decision_time را به UTC تبدیل و naive کنید تا با index_arr (naive UTC) مقایسه شود
         ts = pd.Timestamp(decision_time)
         if ts.tz is not None:
             ts = ts.tz_convert('UTC').tz_localize(None)
@@ -317,7 +317,6 @@ class OptimizedBacktestRunner:
         }
 
     def run(self, start_date=None, end_date=None) -> Dict[str, Any]:
-        # نرمال‌سازی start_date و end_date به UTC-aware
         if start_date is not None:
             start_date = pd.Timestamp(start_date)
             if start_date.tz is None:
@@ -335,7 +334,6 @@ class OptimizedBacktestRunner:
             idx_arr = self._precomputed[symbol][config.TIMEFRAME_5M]["index"]
             if len(idx_arr) > 0:
                 delta = pd.Timedelta(minutes=5)
-                # تبدیل به Timestamp آگاه از منطقه زمانی UTC
                 for ts in pd.to_datetime(idx_arr):
                     decision_times.add(pd.Timestamp(ts, tz='UTC') + delta)
         decision_times = sorted(decision_times)
@@ -346,7 +344,6 @@ class OptimizedBacktestRunner:
             if end_date is not None and decision_time > end_date:
                 continue
 
-            # مدیریت خروج پوزیشن‌های باز
             for sym in list(self.open_positions.keys()):
                 closed = self._try_exit_fast(self.open_positions[sym], decision_time)
                 if closed:
