@@ -458,3 +458,4 @@ class HistoricalBacktestRunner:
             "period_metrics": period_metrics,
             "trades": self.trades,
         }
+        
