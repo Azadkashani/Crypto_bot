@@ -168,7 +168,11 @@ class OptimizedBacktestRunner:
         arr = data.get(key)
         if arr is None or len(arr) == 0:
             return None
-        idx = np.searchsorted(data["index"], decision_time.to_datetime64(), side="right") - 1
+        # decision_time را به UTC تبدیل و naive کنید تا با index_arr (naive UTC) مقایسه شود
+        ts = pd.Timestamp(decision_time)
+        if ts.tz is not None:
+            ts = ts.tz_convert('UTC').tz_localize(None)
+        idx = np.searchsorted(data["index"], ts.to_datetime64(), side="right") - 1
         if idx < 0:
             return None
         val = arr[idx]
@@ -178,7 +182,10 @@ class OptimizedBacktestRunner:
 
     def _get_precomputed_candle(self, symbol: str, tf: str, decision_time: pd.Timestamp) -> Optional[Dict[str, Any]]:
         data = self._precomputed[symbol][tf]
-        idx = np.searchsorted(data["index"], decision_time.to_datetime64(), side="right") - 1
+        ts = pd.Timestamp(decision_time)
+        if ts.tz is not None:
+            ts = ts.tz_convert('UTC').tz_localize(None)
+        idx = np.searchsorted(data["index"], ts.to_datetime64(), side="right") - 1
         if idx < 0:
             return None
         return {
@@ -205,7 +212,10 @@ class OptimizedBacktestRunner:
             return None
 
         data_5m = self._precomputed[symbol][config.TIMEFRAME_5M]
-        idx = np.searchsorted(data_5m["index"], decision_time.to_datetime64(), side="right") - 1
+        ts = pd.Timestamp(decision_time)
+        if ts.tz is not None:
+            ts = ts.tz_convert('UTC').tz_localize(None)
+        idx = np.searchsorted(data_5m["index"], ts.to_datetime64(), side="right") - 1
         if idx < 0:
             return None
 
@@ -307,6 +317,16 @@ class OptimizedBacktestRunner:
         }
 
     def run(self, start_date=None, end_date=None) -> Dict[str, Any]:
+        # نرمال‌سازی start_date و end_date به UTC-aware
+        if start_date is not None:
+            start_date = pd.Timestamp(start_date)
+            if start_date.tz is None:
+                start_date = start_date.tz_localize('UTC')
+        if end_date is not None:
+            end_date = pd.Timestamp(end_date)
+            if end_date.tz is None:
+                end_date = end_date.tz_localize('UTC')
+
         for symbol in self.symbols:
             self._precompute_symbol(symbol)
 
@@ -315,7 +335,9 @@ class OptimizedBacktestRunner:
             idx_arr = self._precomputed[symbol][config.TIMEFRAME_5M]["index"]
             if len(idx_arr) > 0:
                 delta = pd.Timedelta(minutes=5)
-                decision_times.update(pd.to_datetime(idx_arr) + delta)
+                # تبدیل به Timestamp آگاه از منطقه زمانی UTC
+                for ts in pd.to_datetime(idx_arr):
+                    decision_times.add(pd.Timestamp(ts, tz='UTC') + delta)
         decision_times = sorted(decision_times)
 
         for decision_time in decision_times:
@@ -324,6 +346,7 @@ class OptimizedBacktestRunner:
             if end_date is not None and decision_time > end_date:
                 continue
 
+            # مدیریت خروج پوزیشن‌های باز
             for sym in list(self.open_positions.keys()):
                 closed = self._try_exit_fast(self.open_positions[sym], decision_time)
                 if closed:
@@ -563,7 +586,6 @@ class OptimizedBacktestRunner:
             period_metrics[k] = _m(period_metrics[k])
 
         return {
-            # کلیدهای سطح بالا برای سازگاری با BacktestEngine قدیمی
             "success": True,
             "period": {"start": None, "end": None},
             "initial_balance": self.initial_balance,
