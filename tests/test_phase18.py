@@ -1,3 +1,11 @@
+import sys
+from pathlib import Path
+
+# افزودن ریشه پروژه به sys.path برای import ماژول‌های ریشه
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import pytest
 import pandas as pd
 import numpy as np
@@ -54,7 +62,7 @@ def test_expected_candles():
 
 
 def test_validate_empty():
-    df = pd.DataFrame(columns=['open','high','low','close','volume'])
+    df = pd.DataFrame(columns=['open', 'high', 'low', 'close', 'volume'])
     res = validate_ohlcv(df, '5m')
     assert res['valid'] is False
     assert 'empty' in res['issues']
@@ -62,20 +70,20 @@ def test_validate_empty():
 
 def test_validate_unsorted():
     idx = pd.to_datetime(['2025-01-02', '2025-01-01'], utc=True)
-    df = pd.DataFrame({'open':[100,101], 'high':[102,102], 'low':[99,99], 'close':[100,101], 'volume':[10,10]}, index=idx)
+    df = pd.DataFrame({'open': [100, 101], 'high': [102, 102], 'low': [99, 99], 'close': [100, 101], 'volume': [10, 10]}, index=idx)
     res = validate_ohlcv(df, '5m')
     assert 'unsorted timestamps' in res['issues']
 
 
 def test_validate_duplicate():
     idx = pd.to_datetime(['2025-01-01', '2025-01-01'], utc=True)
-    df = pd.DataFrame({'open':[100,101], 'high':[102,102], 'low':[99,99], 'close':[100,101], 'volume':[10,10]}, index=idx)
+    df = pd.DataFrame({'open': [100, 101], 'high': [102, 102], 'low': [99, 99], 'close': [100, 101], 'volume': [10, 10]}, index=idx)
     res = validate_ohlcv(df, '5m')
     assert 'duplicate timestamps' in res['issues']
 
 
 def test_validate_invalid_ohlc():
-    df = pd.DataFrame({'open':[100], 'high':[99], 'low':[101], 'close':[100], 'volume':[100]},
+    df = pd.DataFrame({'open': [100], 'high': [99], 'low': [101], 'close': [100], 'volume': [100]},
                       index=pd.DatetimeIndex([pd.Timestamp('2025-01-01', tz='UTC')]))
     res = validate_ohlcv(df, '5m')
     assert 'high < max' in res['issues']
@@ -83,33 +91,27 @@ def test_validate_invalid_ohlc():
 
 
 def test_validate_negative_volume():
-    df = pd.DataFrame({'open':[100], 'high':[101], 'low':[99], 'close':[100], 'volume':[-1]},
+    df = pd.DataFrame({'open': [100], 'high': [101], 'low': [99], 'close': [100], 'volume': [-1]},
                       index=pd.DatetimeIndex([pd.Timestamp('2025-01-01', tz='UTC')]))
     res = validate_ohlcv(df, '5m')
     assert 'negative volume' in res['issues']
 
 
-def test_validate_incomplete_last_candle():
-    # زمان فعلی را ثابت می‌کنیم
-    now = pd.Timestamp('2025-01-01 00:03:00', tz='UTC')
-    idx = pd.DatetimeIndex([pd.Timestamp('2025-01-01 00:00:00', tz='UTC')])
-    df = pd.DataFrame({'open':[100], 'high':[101], 'low':[99], 'close':[100], 'volume':[100]}, index=idx)
-    # patch pd.Timestamp.now؟ ساده: not test time-dependent, skip
-    # we can't easily patch, but we can call with monkeypatch
-    # Use monkeypatch to set pd.Timestamp.now
+def test_validate_incomplete_last_candle(monkeypatch):
+    # زمان ثابت برای شبیه‌سازی کندل ناقص
+    fixed_now = pd.Timestamp('2025-01-01 00:03:00', tz='UTC')
     original_now = pd.Timestamp.now
-    pd.Timestamp.now = lambda tz=None: now
-    try:
-        res = validate_ohlcv(df, '5m')
-        assert 'incomplete last candle' in res['issues']
-    finally:
-        pd.Timestamp.now = original_now
+    monkeypatch.setattr(pd.Timestamp, 'now', staticmethod(lambda tz=None: fixed_now))
+    idx = pd.DatetimeIndex([pd.Timestamp('2025-01-01 00:00:00', tz='UTC')])
+    df = pd.DataFrame({'open': [100], 'high': [101], 'low': [99], 'close': [100], 'volume': [100]}, index=idx)
+    res = validate_ohlcv(df, '5m')
+    assert 'incomplete last candle' in res['issues']
 
 
 def test_fetch_ohlcv_paginated_multiple_pages():
     base_ts = int(pd.Timestamp('2025-01-01', tz='UTC').timestamp() * 1000)
-    page1 = [[base_ts + i*60000, 100+i, 101+i, 99+i, 100+i, 100] for i in range(1000)]
-    page2 = [[base_ts + 1000*60000 + i*60000, 110+i, 111+i, 109+i, 110+i, 100] for i in range(100)]
+    page1 = [[base_ts + i * 60000, 100 + i, 101 + i, 99 + i, 100 + i, 100] for i in range(1000)]
+    page2 = [[base_ts + 1000 * 60000 + i * 60000, 110 + i, 111 + i, 109 + i, 110 + i, 100] for i in range(100)]
     fake = FakeExchangePagination([page1, page2])
     df = fetch_ohlcv_paginated(fake, 'BTC/USDT:USDT', '5m', base_ts)
     assert len(df) == 1100
@@ -129,9 +131,9 @@ def test_fetch_ohlcv_paginated_handles_duplicates():
 
 def test_downloader_filters_date_range():
     fake = FakeExchangePagination([
-        [[int(pd.Timestamp('2025-01-01 00:00:00', tz='UTC').timestamp()*1000), 100, 101, 99, 100, 100],
-         [int(pd.Timestamp('2025-01-01 00:05:00', tz='UTC').timestamp()*1000), 101, 102, 100, 101, 100],
-         [int(pd.Timestamp('2025-01-01 00:10:00', tz='UTC').timestamp()*1000), 102, 103, 101, 102, 100]]
+        [[int(pd.Timestamp('2025-01-01 00:00:00', tz='UTC').timestamp() * 1000), 100, 101, 99, 100, 100],
+         [int(pd.Timestamp('2025-01-01 00:05:00', tz='UTC').timestamp() * 1000), 101, 102, 100, 101, 100],
+         [int(pd.Timestamp('2025-01-01 00:10:00', tz='UTC').timestamp() * 1000), 102, 103, 101, 102, 100]]
     ])
     downloader = HistoricalDataDownloader(
         fake,
@@ -150,8 +152,6 @@ def test_data_not_empty():
     df = _make_ohlcv(5)
     res = validate_ohlcv(df, '5m')
     assert res['valid'] is True  # بدون بررسی کامل آخرین کندل، ممکن است false شود
-    # چون last candle incomplete? با توجه به now ممکن است incomplete باشد
-    # برای سادگی فقط چک می‌کنیم که empty نبوده
     assert not df.empty
 
 
@@ -189,10 +189,8 @@ def test_deterministic_data_processing():
 
 
 def test_backtest_does_not_run_with_invalid_data():
-    # استفاده از validate_ohlcv برای شبیه‌سازی عدم اجرا با داده نامعتبر
     df = pd.DataFrame({'open': [100], 'high': [99], 'low': [101], 'close': [100], 'volume': [-1]},
                       index=pd.DatetimeIndex([pd.Timestamp('2025-01-01', tz='UTC')]))
     res = validate_ohlcv(df, '5m')
     assert res['valid'] is False
-    # منطق اجرا باید از این نتیجه استفاده کند؛ ما اینجا فقط بررسی می‌کنیم
     assert 'negative volume' in res['issues']
