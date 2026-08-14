@@ -27,7 +27,7 @@ RSI_OVERSOLD = 30
 RSI_OVERBOUGHT = 70
 RSI_PERIOD = 14
 
-# آستانه امتیاز (برای فازهای بعدی)
+# آستانه امتیاز
 SCORE_THRESHOLD_LONG = 7
 SCORE_THRESHOLD_SHORT = 7
 
@@ -37,41 +37,36 @@ DATA_DIR = 'data/'
 # تنظیمات عمومی
 UTC = True
 
-# --- پارامترهای اندیکاتورهای فاز ۳ ---
+# --- اندیکاتورها ---
 EMA_SHORT = 9
 EMA_LONG = 21
-
 RSI_PERIOD = 14
 ATR_PERIOD = 14
 ADX_PERIOD = 14
 VOLUME_SMA_PERIOD = 20
-
 SWING_LEFT_BARS = 3
 SWING_RIGHT_BARS = 3
 
-# --- پارامترهای رژیم بازار (فاز ۴) ---
+# --- رژیم بازار ---
 EMA_FAST = 20
 EMA_MID = 50
 EMA_SLOW = 200
 ADX_MIN_TREND = 20
 
-# --- تایم‌فریم‌های سیگنال (فاز ۷) ---
-TIMEFRAME_4H = TIMEFRAMES[0]
-TIMEFRAME_1H = TIMEFRAMES[1]
-TIMEFRAME_5M = TIMEFRAMES[2]
+# --- تایم‌فریم‌های سیگنال ---
+TIMEFRAME_4H = '4h'
+TIMEFRAME_1H = '1h'
+TIMEFRAME_5M = '5m'
 
-# --- پارامترهای Risk Gate (فاز ۸) ---
+# --- Risk Gate ---
 RISK_REWARD = 2.0
 
-# --- پارامترهای Position Sizing (فاز ۹) ---
-RISK_PER_TRADE = 0.01
-ACCOUNT_BALANCE = 1000.0
-LEVERAGE = 20
+# --- Position Sizing / Portfolio ---
+RISK_PER_TRADE = 0.01          # ۱٪ کل سرمایه
+POSITION_ALLOCATION = 0.25     # ۲۵٪ سرمایه برای هر معامله
+MAX_LEVERAGE = 20              # حداکثر لوریج مجاز
+MAX_CONCURRENT_POSITIONS = 4   # حداکثر ۴ پوزیشن همزمان
+MAX_TOTAL_RISK = 0.04          # حداکثر ریسک کل ۴٪
 
-# --- پارامترهای Signal Scoring (فاز ۱۶) ---
-REGIME_SCORE_WEIGHT = 25
-RSI_SCORE_WEIGHT = 20
-CHOCH_SCORE_WEIGHT = 20
-BOS_SCORE_WEIGHT = 20
-VOLUME_SCORE_WEIGHT = 10
-RR_SCORE_WEIGHT = 5
+ACCOUNT_BALANCE = 1000.0
+LEVERAGE = 20                  # لوریج قدیمی (برای سازگاری)
