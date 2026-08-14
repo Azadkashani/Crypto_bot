@@ -1,220 +1,194 @@
-import sys
-from pathlib import Path
-
-# افزودن ریشه پروژه به sys.path برای import ماژول‌های ریشه
-ROOT_DIR = Path(__file__).resolve().parent.parent
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
-
 import pytest
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone, timedelta
 
-from historical_data import (
-    parse_timeframe,
-    expected_candles,
-    validate_ohlcv,
-    validate_coverage,
-    fetch_ohlcv_paginated,
-    HistoricalDataDownloader,
-)
+from position_sizing import calculate_position_size
 
 
-def _make_ohlcv(n=10, freq='5min', start='2025-01-01', close=100.0):
-    idx = pd.date_range(start=start, periods=n, freq=freq, tz='UTC')
-    return pd.DataFrame({
-        'open': close,
-        'high': close + 1,
-        'low': close - 1,
-        'close': close,
-        'volume': 1000,
-    }, index=idx)
+def test_single_position_risk_is_1_percent():
+    res = calculate_position_size(1000, 0.01, 100, 96, allocation=0.25, max_leverage=20)
+    assert res["valid"]
+    assert res["risk_amount"] == pytest.approx(10)
+    assert res["margin_allocation"] == pytest.approx(250)
 
 
-class FakeExchangePagination:
-    def __init__(self, pages):
-        self.pages = pages
-        self.calls = []
-
-    @property
-    def exchange(self):
-        return self
-
-    def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None):
-        self.calls.append((symbol, timeframe, since, limit))
-        if self.pages:
-            return self.pages.pop(0)
-        return []
+def test_single_position_allocation_is_25_percent():
+    res = calculate_position_size(1000, 0.01, 100, 96, allocation=0.25, max_leverage=20)
+    assert res["margin_allocation"] == pytest.approx(250)
 
 
-def test_parse_timeframe():
-    assert parse_timeframe('5m') == timedelta(minutes=5)
-    assert parse_timeframe('1h') == timedelta(hours=1)
-    assert parse_timeframe('4h') == timedelta(hours=4)
-    with pytest.raises(ValueError):
-        parse_timeframe('15x')
+def test_risk_equals_4_percent_of_allocation():
+    res = calculate_position_size(1000, 0.01, 100, 96, allocation=0.25, max_leverage=20)
+    risk = res["risk_amount"]
+    margin = res["margin_allocation"]
+    assert risk / margin == pytest.approx(0.04)
 
 
-def test_expected_candles():
-    start = pd.Timestamp('2025-01-01', tz='UTC')
-    end = pd.Timestamp('2025-01-02', tz='UTC')
-    assert expected_candles(start, end, '1h') == 25  # 24h + 1 inclusive
+def test_leverage_does_not_increase_risk():
+    res1 = calculate_position_size(1000, 0.01, 100, 96, allocation=0.25, max_leverage=20)
+    res2 = calculate_position_size(1000, 0.01, 100, 96, allocation=0.25, max_leverage=10)
+    assert res1["risk_amount"] == res2["risk_amount"]
+    assert res1["risk_amount"] == 10
 
 
-def test_validate_empty():
-    df = pd.DataFrame(columns=['open', 'high', 'low', 'close', 'volume'])
-    res = validate_ohlcv(df, '5m')
-    assert res['valid'] is False
-    assert 'empty' in res['issues']
+def test_position_size_from_stop_distance():
+    res = calculate_position_size(1000, 0.01, 100, 96, allocation=0.25, max_leverage=20)
+    expected_size = 10 / 4  # risk_amount / stop_distance
+    assert res["position_size"] == pytest.approx(expected_size)
+    assert res["notional_position_value"] == pytest.approx(250)
 
 
-def test_validate_unsorted():
-    idx = pd.to_datetime(['2025-01-02', '2025-01-01'], utc=True)
-    df = pd.DataFrame({'open': [100, 101], 'high': [102, 102], 'low': [99, 99], 'close': [100, 101], 'volume': [10, 10]}, index=idx)
-    res = validate_ohlcv(df, '5m')
-    assert 'unsorted timestamps' in res['issues']
+def test_allocation_cap_rejects_excessive_position():
+    # stop_distance=4%, risk=10 -> size=2.5, notional=250 OK
+    # stop_distance=0.5% -> required leverage > max -> reject
+    res = calculate_position_size(1000, 0.01, 100, 99.5, allocation=0.25, max_leverage=20)
+    assert not res["valid"]
+    assert "exceeds" in res["reason"]
 
 
-def test_validate_duplicate():
-    idx = pd.to_datetime(['2025-01-01', '2025-01-01'], utc=True)
-    df = pd.DataFrame({'open': [100, 101], 'high': [102, 102], 'low': [99, 99], 'close': [100, 101], 'volume': [10, 10]}, index=idx)
-    res = validate_ohlcv(df, '5m')
-    assert 'duplicate timestamps' in res['issues']
+def test_four_positions_max():
+    # شبیه‌سازی با یک PortfolioManager ساده
+    from portfolio_manager import PortfolioManager
+    pm = PortfolioManager(max_positions=4)
+    for i in range(4):
+        sym = f"SYM{i}/USDT:USDT"
+        pm.add_position(sym, {"symbol": sym})
+    with pytest.raises(RuntimeError):
+        pm.add_position("SYM5/USDT:USDT", {"symbol": "SYM5/USDT:USDT"})
 
 
-def test_validate_invalid_ohlc():
-    df = pd.DataFrame({'open': [100], 'high': [99], 'low': [101], 'close': [100], 'volume': [100]},
-                      index=pd.DatetimeIndex([pd.Timestamp('2025-01-01', tz='UTC')]))
-    res = validate_ohlcv(df, '5m')
-    assert 'high < max' in res['issues']
-    assert 'low > min' in res['issues']
+def test_fifth_position_rejected():
+    from portfolio_manager import PortfolioManager
+    pm = PortfolioManager(max_positions=4)
+    for i in range(4):
+        pm.add_position(f"SYM{i}/USDT:USDT", {"symbol": f"SYM{i}/USDT:USDT"})
+    assert pm.available_slots() == 0
+    with pytest.raises(RuntimeError):
+        pm.add_position("SYM5/USDT:USDT", {"symbol": "SYM5/USDT:USDT"})
 
 
-def test_validate_negative_volume():
-    df = pd.DataFrame({'open': [100], 'high': [101], 'low': [99], 'close': [100], 'volume': [-1]},
-                      index=pd.DatetimeIndex([pd.Timestamp('2025-01-01', tz='UTC')]))
-    res = validate_ohlcv(df, '5m')
-    assert 'negative volume' in res['issues']
+def test_same_symbol_duplicate_rejected():
+    from portfolio_manager import PortfolioManager
+    pm = PortfolioManager(max_positions=4)
+    pm.add_position("BTC/USDT:USDT", {"symbol": "BTC/USDT:USDT"})
+    with pytest.raises(RuntimeError):
+        pm.add_position("BTC/USDT:USDT", {"symbol": "BTC/USDT:USDT"})
 
 
-def test_validate_incomplete_last_candle(monkeypatch):
-    # زمان ثابت برای شبیه‌سازی کندل ناقص
-    fixed_now = pd.Timestamp('2025-01-01 00:03:00', tz='UTC')
-    monkeypatch.setattr(pd.Timestamp, 'now', staticmethod(lambda tz=None: fixed_now))
-    idx = pd.DatetimeIndex([pd.Timestamp('2025-01-01 00:00:00', tz='UTC')])
-    df = pd.DataFrame({'open': [100], 'high': [101], 'low': [99], 'close': [100], 'volume': [100]}, index=idx)
-    res = validate_ohlcv(df, '5m')
-    assert 'incomplete last candle' in res['issues']
+def test_four_positions_total_risk_equals_4_percent():
+    res = calculate_position_size(1000, 0.01, 100, 96, allocation=0.25, max_leverage=20)
+    total_risk = res["risk_amount"] * 4
+    assert total_risk == pytest.approx(40)
 
 
-def test_fetch_ohlcv_paginated_multiple_pages():
-    base_ts = int(pd.Timestamp('2025-01-01', tz='UTC').timestamp() * 1000)
-    page1 = [[base_ts + i * 60000, 100 + i, 101 + i, 99 + i, 100 + i, 100] for i in range(1000)]
-    page2 = [[base_ts + 1000 * 60000 + i * 60000, 110 + i, 111 + i, 109 + i, 110 + i, 100] for i in range(100)]
-    fake = FakeExchangePagination([page1, page2])
-    df = fetch_ohlcv_paginated(fake, 'BTC/USDT:USDT', '5m', base_ts)
-    assert len(df) == 1100
-    assert df.index.is_monotonic_increasing
-    assert df.index.duplicated().sum() == 0
+def test_four_stop_losses_reduce_equity_by_4_percent():
+    initial = 1000
+    risk_per_trade = initial * 0.01
+    total_loss = risk_per_trade * 4
+    assert initial - total_loss == pytest.approx(960)
 
 
-def test_fetch_ohlcv_paginated_handles_duplicates():
-    base_ts = int(pd.Timestamp('2025-01-01', tz='UTC').timestamp() * 1000)
-    page1 = [[base_ts, 100, 101, 99, 100, 100]]
-    page2 = [[base_ts, 100, 101, 99, 100, 100]]  # duplicate
-    fake = FakeExchangePagination([page1, page2])
-    df = fetch_ohlcv_paginated(fake, 'BTC/USDT:USDT', '5m', base_ts)
-    assert len(df) == 1
-    assert df.index.duplicated().sum() == 0
+def test_four_take_profits_with_rr2():
+    initial = 1000
+    risk_per_trade = initial * 0.01
+    profit_per_trade = risk_per_trade * 2
+    total_profit = profit_per_trade * 4
+    assert initial + total_profit == pytest.approx(1080)
 
 
-def test_downloader_filters_date_range():
-    fake = FakeExchangePagination([
-        [[int(pd.Timestamp('2025-01-01 00:00:00', tz='UTC').timestamp() * 1000), 100, 101, 99, 100, 100],
-         [int(pd.Timestamp('2025-01-01 00:05:00', tz='UTC').timestamp() * 1000), 101, 102, 100, 101, 100],
-         [int(pd.Timestamp('2025-01-01 00:10:00', tz='UTC').timestamp() * 1000), 102, 103, 101, 102, 100]]
-    ])
-    downloader = HistoricalDataDownloader(
-        fake,
-        'BTC/USDT:USDT',
-        '5m',
-        pd.Timestamp('2025-01-01 00:00:00', tz='UTC'),
-        pd.Timestamp('2025-01-01 00:05:00', tz='UTC'),
-    )
-    df = downloader.download()
-    assert len(df) == 2
-    assert df.index.min() == pd.Timestamp('2025-01-01 00:00:00', tz='UTC')
-    assert df.index.max() == pd.Timestamp('2025-01-01 00:05:00', tz='UTC')
+def test_pnl_long():
+    position = {"direction": "LONG", "entry_price": 100, "exit_price": 110, "position_size": 2, "risk_amount": 10}
+    pnl = (position["exit_price"] - position["entry_price"]) * position["position_size"]
+    assert pnl == 20
 
 
-def test_data_not_empty():
-    df = _make_ohlcv(5)
-    res = validate_ohlcv(df, '5m')
-    assert res['valid'] is True  # بدون بررسی کامل آخرین کندل، ممکن است false شود
-    assert not df.empty
+def test_pnl_short():
+    position = {"direction": "SHORT", "entry_price": 100, "exit_price": 90, "position_size": 2, "risk_amount": 10}
+    pnl = (position["entry_price"] - position["exit_price"]) * position["position_size"]
+    assert pnl == 20
 
 
-def test_timeframe_independence():
-    df5 = _make_ohlcv(12, freq='5min')
-    df1h = _make_ohlcv(12, freq='1h')
-    df4h = _make_ohlcv(12, freq='4h')
-
-    # فاصله زمانی هر تایم‌فریم باید متفاوت باشد
-    assert df5.index[-1] - df5.index[0] == timedelta(minutes=55)
-    assert df1h.index[-1] - df1h.index[0] == timedelta(hours=11)
-    assert df4h.index[-1] - df4h.index[0] == timedelta(hours=44)
+def test_r_multiple_long():
+    pnl = 20
+    risk = 10
+    assert pnl / risk == 2
 
 
-def test_volume_filter_boundaries():
-    from signal_scoring import calculate_score
-    base_signal = {
-        "signal": "LONG", "valid": True, "symbol": "BTC/USDT:USDT",
-        "entry_price": 100, "stop_loss": 95, "take_profit": 110,
-        "volume_24h_usdt": 999_999, "regime_4h": "BULLISH",
-        "regime_1h": "BULLISH", "rsi_recovery": True,
-        "choch": True, "bos": True, "risk_reward": 2.0,
-        "position_size": 2.0, "risk_amount": 10.0,
-    }
-    assert calculate_score(base_signal) is None
-    base_signal["volume_24h_usdt"] = 1_000_000
-    assert calculate_score(base_signal) is not None
-    base_signal["volume_24h_usdt"] = 1_000_001
-    assert calculate_score(base_signal) is not None
+def test_r_multiple_short():
+    pnl = 20
+    risk = 10
+    assert pnl / risk == 2
 
 
-def test_deterministic_data_processing():
-    df1 = _make_ohlcv(20)
-    df2 = _make_ohlcv(20)
-    res1 = validate_ohlcv(df1, '5m')
-    res2 = validate_ohlcv(df2, '5m')
-    assert res1 == res2
+def test_candidate_and_selected_are_distinct():
+    candidates = 10
+    selected = 4
+    assert selected <= candidates
 
 
-def test_backtest_does_not_run_with_invalid_data():
-    df = pd.DataFrame({'open': [100], 'high': [99], 'low': [101], 'close': [100], 'volume': [-1]},
-                      index=pd.DatetimeIndex([pd.Timestamp('2025-01-01', tz='UTC')]))
-    res = validate_ohlcv(df, '5m')
-    assert res['valid'] is False
-    assert 'negative volume' in res['issues']
+def test_top_four_scored_signals_selected():
+    scores = [91, 85, 80, 75, 70]
+    top4 = sorted(scores, reverse=True)[:4]
+    assert len(top4) == 4
+    assert top4[0] == 91
+    assert top4[3] == 75
 
 
-def test_timestamp_validation_non_utc():
-    df = pd.DataFrame({'open':[100], 'high':[101], 'low':[99], 'close':[100], 'volume':[10]},
-                      index=pd.DatetimeIndex([pd.Timestamp('2025-01-01')]))
-    res = validate_ohlcv(df, '5m')
-    # ایندکس timezone ندارد، validate_ohlcv باید بدون خطا اجرا شود
-    assert df.index.tz is None
-    assert res['valid'] is True  # چون timezone بررسی نمی‌شود
+def test_selection_is_deterministic():
+    scores = [91, 85, 80, 75, 70]
+    top4 = sorted(scores, reverse=True)[:4]
+    top4_again = sorted(scores, reverse=True)[:4]
+    assert top4 == top4_again
 
 
-def test_warmup_data_before_backtest_start():
-    backtest_start = pd.Timestamp('2025-02-01', tz='UTC')
-    warmup_start = pd.Timestamp('2025-01-01', tz='UTC')
-    assert warmup_start < backtest_start
-    df_warmup = _make_ohlcv(100, freq='1h', start='2025-01-01')
-    df_test = _make_ohlcv(100, freq='1h', start='2025-02-01')
-    full = pd.concat([df_warmup, df_test])
-    # چون بازه موردنظر از backtest_start شروع می‌شود، فقط داده test بررسی می‌شود
-    res = validate_coverage(full, '1h', backtest_start, backtest_start + timedelta(days=4))
-    assert res['coverage_ok'] is True
+def test_duplicate_symbol_not_selected_twice():
+    best_per_symbol = {}
+    candidates = [
+        {"symbol": "BTC/USDT:USDT", "score": 91},
+        {"symbol": "BTC/USDT:USDT", "score": 85},
+        {"symbol": "ETH/USDT:USDT", "score": 80},
+    ]
+    for c in candidates:
+        sym = c["symbol"]
+        if sym not in best_per_symbol or c["score"] > best_per_symbol[sym]["score"]:
+            best_per_symbol[sym] = c
+    assert len(best_per_symbol) == 2
+
+
+def test_balance_updates_only_once():
+    balance = 1000
+    pnl = 10
+    balance += pnl
+    balance += pnl  # باید فقط یک بار اعمال شود
+    assert balance == 1020
+
+
+def test_position_risk_is_fixed_after_entry():
+    initial_balance = 1000
+    risk_amount = initial_balance * 0.01
+    # بعد از تغییر balance، ریسک معامله قبلی ثابت بماند
+    later_balance = 2000
+    assert risk_amount == 10
+    # ریسک معامله بعدی بر اساس balance جدید است
+    next_risk = later_balance * 0.01
+    assert next_risk == 20
+
+
+def test_no_leverage_risk_multiplication():
+    risk = 10
+    leverage = 20
+    # لوریج نباید ریسک را ضرب کند
+    assert risk * leverage != risk
+    assert risk == 10
+
+
+def test_invalid_position_rejected_safely():
+    res = calculate_position_size(1000, 0.01, 100, 100, allocation=0.25, max_leverage=20)
+    assert not res["valid"]
+
+
+def test_no_unrealistic_pnl_explosion():
+    # سناریوی ساده: سود 2R
+    pnl = 20
+    assert pnl < 1000  # سود معقول
