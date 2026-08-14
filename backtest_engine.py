@@ -97,8 +97,11 @@ class OptimizedBacktestRunner:
             df = df.sort_index()
             index_arr = df.index.values.astype("datetime64[ns]")
 
+            # تعریف enriched برای هر دو شاخه
+            enriched = df.copy()
+
             if tf == config.TIMEFRAME_5M:
-                enriched = add_rsi(df, period=config.RSI_PERIOD)
+                enriched = add_rsi(enriched, period=config.RSI_PERIOD)
                 enriched = detect_swings(enriched)
                 enriched = detect_choch(enriched)
                 enriched = detect_bos(enriched)
