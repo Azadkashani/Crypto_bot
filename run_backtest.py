@@ -24,15 +24,24 @@ from historical_data import (
     load_local_csv,
     save_csv,
     DataCoverageError,
-    timeframe_to_timedelta,   # ← این import اضافه شد
+    timeframe_to_timedelta,
 )
 from historical_backtest import HistoricalBacktestRunner, HistoricalDataProvider
 
 # ---------------------------------------------------------------
 # تنظیمات بک‌تست
 # ---------------------------------------------------------------
-BACKTEST_START = pd.Timestamp("2025-01-01T00:00:00+00:00")
-BACKTEST_END = pd.Timestamp("2026-01-01T00:00:00+00:00")
+# بازه پیش‌فرض: ۳۰ روز گذشته تا آخرین کندل کامل ۴ ساعته
+# چون Gate.io فقط ۱۰,۰۰۰ کندل اخیر ۵ دقیقه‌ای را می‌دهد (~۳۴ روز)
+NOW = pd.Timestamp.now(tz='UTC')
+BACKTEST_END = NOW.floor('4h') - pd.Timedelta(hours=4)   # آخرین کندل کامل 4h
+BACKTEST_START = BACKTEST_END - pd.Timedelta(days=30)
+
+# امکان override با متغیر محیطی
+if os.getenv("BACKTEST_START"):
+    BACKTEST_START = pd.Timestamp(os.getenv("BACKTEST_START"))
+if os.getenv("BACKTEST_END"):
+    BACKTEST_END = pd.Timestamp(os.getenv("BACKTEST_END"))
 
 DATA_DIR = "data"
 
@@ -52,9 +61,9 @@ SLIPPAGE_RATE = 0.0002
 
 # تعداد کندل‌های موردنیاز برای warm-up پیش از شروع بک‌تست
 WARMUP_BARS = {
-    "5m": 500,   # ~ 1.7 روز
-    "1h": 300,   # ~ 12.5 روز
-    "4h": 300,   # ~ 50 روز
+    "5m": 500,
+    "1h": 300,
+    "4h": 300,
 }
 
 
@@ -169,7 +178,6 @@ def main():
         else:
             print(f"   ✅ {sym}: all data present")
 
-    # اگر خطایی وجود دارد، بک‌تست اجرا نشود
     if errors:
         print("\n" + "=" * 70)
         print("BACKTEST BLOCKED")
