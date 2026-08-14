@@ -269,3 +269,4 @@ def generate_signal(
         "timestamp": latest_5m,
         "symbol": symbol,
     }
+    
