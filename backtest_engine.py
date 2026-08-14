@@ -1,13 +1,9 @@
 """
-Backtest Engine بهینه‌شده با پیش‌محاسبه‌ی کامل اندیکاتورها.
+Backtest Engine با دو کلاس:
+- BacktestEngine (رابط قدیمی برای سازگاری با تست‌های فاز ۱۰ و ۱۲)
+- OptimizedBacktestRunner (نسخه بهینه‌شده با پیش‌محاسبه اندیکاتورها)
 
-این موتور:
-    - همه‌ی اندیکاتورها (RSI، Swing، CHOCH، BOS، Regime) را فقط یک بار روی کل داده محاسبه می‌کند.
-    - در حلقه اصلی فقط از آرایه‌های از پیش ساخته‌شده و searchsorted استفاده می‌کند.
-    - هیچ DataFrame یا ایندیکاتور دوباره‌ای در طول حلقه ساخته نمی‌شود.
-    - ترتیب زمانی و عدم Look-ahead کاملاً حفظ شده است.
-
-قوانین استراتژی، ریسک، تعداد معاملات و خروج SL/TP بدون تغییر است.
+هیچ تغییر منطقی در استراتژی، Risk، Scoring یا SL/TP ایجاد نشده است.
 """
 
 from __future__ import annotations
@@ -20,19 +16,56 @@ import config
 import strategy
 import signal_scoring
 from metrics import calculate_metrics
-from indicators import add_rsi, add_ema, add_adx
+from indicators import add_rsi, add_ema, add_adx, detect_swings
 from regime import get_regime
 from choch import detect_choch
 from bos import detect_bos
 
 
+class SimpleDataProvider:
+    """Provider ساده برای سازگاری با interface قدیمی BacktestEngine."""
+    def __init__(self, data_5m, data_1h, data_4h, volumes=None, symbol='BTC/USDT:USDT'):
+        self.symbols = [symbol]
+        self.data = {
+            symbol: {
+                '5m': data_5m,
+                '1h': data_1h,
+                '4h': data_4h,
+            }
+        }
+        if volumes is None:
+            volumes = {symbol: 2_000_000.0}
+        self.volumes = volumes
+
+    def get_ohlcv(self, symbol, timeframe, start=None, end=None):
+        df = self.data.get(symbol, {}).get(timeframe, pd.DataFrame())
+        if start is not None:
+            df = df[df.index >= start]
+        if end is not None:
+            df = df[df.index <= end]
+        return df.copy()
+
+    def get_volume_24h_usdt(self, symbol, timestamp):
+        return self.volumes.get(symbol)
+
+
+class BacktestEngine(OptimizedBacktestRunner):
+    """
+    نسخه سازگار با interface قدیمی (data_5m, data_1h, data_4h, initial_balance).
+    """
+    def __init__(self, data_5m, data_1h, data_4h, initial_balance=1000.0):
+        provider = SimpleDataProvider(data_5m, data_1h, data_4h)
+        super().__init__(
+            provider,
+            provider.symbols,
+            initial_balance=initial_balance,
+        )
+
+
 class OptimizedBacktestRunner:
     """
-    نسخه‌ی سریع HistoricalBacktestRunner با پیش‌محاسبه.
-
-    API مشابه HistoricalBacktestRunner است و خروجی آن از نظر منطقی یکسان است.
+    نسخهٔ بهینه‌شده با پیش‌محاسبه‌ی کامل اندیکاتورها.
     """
-
     def __init__(
         self,
         provider,
@@ -57,15 +90,12 @@ class OptimizedBacktestRunner:
         self.equity_curve: List[Dict[str, Any]] = [
             {"timestamp": None, "balance": self.current_balance}
         ]
-
-        # داده‌های پیش‌پردازش‌شده
-        self._precomputed = {}
+        self._precomputed: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
     # ------------------------------------------------------------------
     # پیش‌محاسبه
     # ------------------------------------------------------------------
     def _precompute_symbol(self, symbol: str) -> None:
-        """پیش‌محاسبه تمام آرایه‌های لازم برای یک Symbol."""
         data = {}
         for tf in [config.TIMEFRAME_4H, config.TIMEFRAME_1H, config.TIMEFRAME_5M]:
             df = self.provider.get_ohlcv(symbol, tf, None, None)
@@ -79,15 +109,10 @@ class OptimizedBacktestRunner:
             df = df.sort_index()
             index_arr = df.index.values.astype("datetime64[ns]")
 
-            enriched = df.copy()
             if tf == config.TIMEFRAME_5M:
-                # RSI
-                enriched = add_rsi(enriched, period=config.RSI_PERIOD)
-                # Swing
+                enriched = add_rsi(df, period=config.RSI_PERIOD)
                 enriched = detect_swings(enriched)
-                # CHOCH
                 enriched = detect_choch(enriched)
-                # BOS
                 enriched = detect_bos(enriched)
 
                 rsi_series = enriched[f"rsi_{config.RSI_PERIOD}"].to_numpy(dtype="float64")
@@ -102,6 +127,7 @@ class OptimizedBacktestRunner:
                 low_arr = enriched["low"].to_numpy(dtype="float64")
                 open_arr = enriched["open"].to_numpy(dtype="float64")
                 volume_arr = enriched["volume"].to_numpy(dtype="float64")
+
                 data[tf] = {
                     "index": index_arr,
                     "close": close_arr,
@@ -118,31 +144,26 @@ class OptimizedBacktestRunner:
                     "bearish_bos": bearish_bos,
                 }
             else:
-                # Regime per candle
                 ema_fast_arr = add_ema(enriched, config.EMA_FAST, "close", "ema_fast")["ema_fast"].to_numpy()
                 ema_mid_arr = add_ema(enriched, config.EMA_MID, "close", "ema_mid")["ema_mid"].to_numpy()
                 ema_slow_arr = add_ema(enriched, config.EMA_SLOW, "close", "ema_slow")["ema_slow"].to_numpy()
                 adx_arr = add_adx(enriched, config.ADX_PERIOD, "adx")["adx"].to_numpy()
 
                 regime_arr = np.full(len(df), "RANGE", dtype=object)
+                close_vals = enriched["close"].to_numpy(dtype="float64")
                 for i in range(len(df)):
                     if np.isnan(ema_fast_arr[i]) or np.isnan(ema_mid_arr[i]) or np.isnan(ema_slow_arr[i]) or np.isnan(adx_arr[i]):
                         continue
-                    ema_fast = ema_fast_arr[i]
-                    ema_mid = ema_mid_arr[i]
-                    ema_slow = ema_slow_arr[i]
-                    close = enriched["close"].iloc[i]
-                    adx = adx_arr[i]
                     if (
-                        ema_fast > ema_mid > ema_slow
-                        and close > ema_fast
-                        and adx >= config.ADX_MIN_TREND
+                        ema_fast_arr[i] > ema_mid_arr[i] > ema_slow_arr[i]
+                        and close_vals[i] > ema_fast_arr[i]
+                        and adx_arr[i] >= config.ADX_MIN_TREND
                     ):
                         regime_arr[i] = "BULLISH"
                     elif (
-                        ema_fast < ema_mid < ema_slow
-                        and close < ema_fast
-                        and adx >= config.ADX_MIN_TREND
+                        ema_fast_arr[i] < ema_mid_arr[i] < ema_slow_arr[i]
+                        and close_vals[i] < ema_fast_arr[i]
+                        and adx_arr[i] >= config.ADX_MIN_TREND
                     ):
                         regime_arr[i] = "BEARISH"
 
@@ -154,7 +175,6 @@ class OptimizedBacktestRunner:
         self._precomputed[symbol] = data
 
     def _latest_value_at(self, symbol: str, tf: str, decision_time: pd.Timestamp, key: str):
-        """آخرین مقدار موجود تا decision_time را از آرایه‌ی precomputed برمی‌گرداند."""
         data = self._precomputed[symbol][tf]
         arr = data.get(key)
         if arr is None or len(arr) == 0:
@@ -163,13 +183,11 @@ class OptimizedBacktestRunner:
         if idx < 0:
             return None
         val = arr[idx]
-        # اگر NaN بود، None برگردان
         if isinstance(val, float) and np.isnan(val):
             return None
         return val
 
-    def _get_precomputed_candle(self, symbol: str, tf: str, decision_time: pd.Timestamp) -> Dict[str, Any]:
-        """آخرین کندل بسته‌شده از آرایه‌های precomputed."""
+    def _get_precomputed_candle(self, symbol: str, tf: str, decision_time: pd.Timestamp) -> Optional[Dict[str, Any]]:
         data = self._precomputed[symbol][tf]
         idx = np.searchsorted(data["index"], decision_time.to_datetime64(), side="right") - 1
         if idx < 0:
@@ -183,10 +201,6 @@ class OptimizedBacktestRunner:
         }
 
     def _check_signal_fast(self, symbol: str, decision_time: pd.Timestamp) -> Optional[Dict[str, Any]]:
-        """
-        تولید سیگنال با استفاده از آرایه‌های precomputed بدون ساخت DataFrame.
-        """
-        # Regime values at decision_time
         r4h = self._latest_value_at(symbol, config.TIMEFRAME_4H, decision_time, "regime")
         r1h = self._latest_value_at(symbol, config.TIMEFRAME_1H, decision_time, "regime")
         if r4h is None or r1h is None:
@@ -213,11 +227,9 @@ class OptimizedBacktestRunner:
         latest_rsi = rsi_arr[idx]
         prev_rsi = rsi_arr[idx - 1]
 
-        # RSI condition
         if is_bullish:
             if latest_rsi <= prev_rsi:
                 return None
-            # بررسی اینکه قبلاً RSI در ناحیه oversold رسیده باشد
             zone = rsi_arr[: idx + 1] <= config.RSI_OVERSOLD
             if not zone.any():
                 return None
@@ -228,7 +240,6 @@ class OptimizedBacktestRunner:
             if not zone.any():
                 return None
 
-        # CHOCH and BOS flags up to idx
         if is_bullish:
             choch_flags = data_5m["bullish_choch"][: idx + 1]
             bos_flags = data_5m["bullish_bos"][: idx + 1]
@@ -239,16 +250,10 @@ class OptimizedBacktestRunner:
         if not choch_flags.any() or not bos_flags.any():
             return None
 
-        # دریافت کندل BOS فعلی برای entry/SL/TP
         candle = self._get_precomputed_candle(symbol, config.TIMEFRAME_5M, decision_time)
         if candle is None:
             return None
 
-        # شبیه‌سازی evaluate_risk با داده واقعی
-        direction_sign = 1 if is_bullish else -1
-
-        # یافتن آخرین swing مناسب قبل از BOS
-        # (با استفاده از آرایه‌های precomputed)
         swing_arr = data_5m["swing_low"] if is_bullish else data_5m["swing_high"]
         swing_indices = np.where(swing_arr[: idx + 1])[0]
         if len(swing_indices) == 0:
@@ -271,7 +276,6 @@ class OptimizedBacktestRunner:
             return None
         take_profit = entry_price + risk * config.RISK_REWARD if is_bullish else entry_price - risk * config.RISK_REWARD
 
-        # Position sizing داینامیک
         from position_sizing import calculate_position_size
         pos = calculate_position_size(
             account_balance=self.current_balance,
@@ -284,7 +288,7 @@ class OptimizedBacktestRunner:
         if not pos["valid"]:
             return None
 
-        signal = {
+        return {
             "signal": direction,
             "valid": True,
             "reason": f"{direction} signal valid",
@@ -312,10 +316,8 @@ class OptimizedBacktestRunner:
             "timestamp": decision_time,
             "symbol": symbol,
         }
-        return signal
 
     def run(self, start_date=None, end_date=None) -> Dict[str, Any]:
-        # پیش‌محاسبه همه Symbol
         for symbol in self.symbols:
             self._precompute_symbol(symbol)
 
@@ -333,7 +335,6 @@ class OptimizedBacktestRunner:
             if end_date is not None and decision_time > end_date:
                 continue
 
-            # مدیریت خروج پوزیشن‌های باز
             for sym in list(self.open_positions.keys()):
                 closed = self._try_exit_fast(self.open_positions[sym], decision_time)
                 if closed:
@@ -367,7 +368,6 @@ class OptimizedBacktestRunner:
 
             self.candidates_count += len(candidates)
 
-            # فقط بهترین کاندید برای هر نماد
             best_per_symbol = {}
             for cand in candidates:
                 sym = cand["symbol"]
@@ -411,19 +411,20 @@ class OptimizedBacktestRunner:
                     "regime_1h": best.get("regime_1h"),
                 }
 
-        # بستن پوزیشن‌های باز باقی‌مانده
         for sym in list(self.open_positions.keys()):
             self._close_at_end_fast(self.open_positions[sym], end_date)
             del self.open_positions[sym]
 
-        # ساخت equity curve
         equity_times = []
         balances = []
         for trade in self.trades:
             equity_times.append(trade["exit_time"])
             balances.append(trade["balance_after"])
         if equity_times:
-            self.equity_curve = [{"timestamp": t, "balance": b} for t, b in zip(equity_times, balances)]
+            self.equity_curve = [
+                {"timestamp": t, "balance": b}
+                for t, b in zip(equity_times, balances)
+            ]
 
         return self._compute_metrics()
 
