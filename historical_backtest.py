@@ -1,8 +1,11 @@
 """
-Real Market Historical Backtest با پشتیبانی چند پوزیشن همزمان و بهینه‌سازی سرعت.
+Real Market Historical Backtest با پشتیبانی چند پوزیشن همزمان و بهینه‌سازی حافظه.
 
-این نسخه داده‌ها را یک بار بارگذاری و ایندکس‌ها را پیش‌محاسبه می‌کند تا
-در حلقه اصلی هیچ I/O یا slicing تکراری انجام نشود.
+این نسخه:
+    - داده‌ها را فقط یک بار از Provider بارگذاری می‌کند.
+    - هیچ برش DataFrame ای را در کش نگه نمی‌دارد.
+    - برای دسترسی به برش‌های زمانی از searchsorted استفاده می‌کند.
+    - مصرف RAM را تا حد زیادی کاهش می‌دهد.
 
 منطق Strategy / Scoring / Ranking / Risk / Position Sizing تغییر نکرده است.
 """
@@ -20,6 +23,7 @@ import signal_scoring
 from metrics import calculate_metrics
 
 MIN_24H_VOLUME_USDT = getattr(config, "MIN_24H_VOLUME_USDT", 1_000_000)
+
 
 def _timeframe_to_timedelta(tf: str) -> pd.Timedelta:
     unit = tf[-1]
@@ -95,58 +99,54 @@ class HistoricalBacktestRunner:
             {"timestamp": None, "balance": self.current_balance}
         ]
 
-        # حافظه برای داده‌های پیش‌بارگذاری‌شده
-        self._data_cache: Dict[Tuple[str, str], pd.DataFrame] = {}
-        self._closed_slice_cache: Dict[Tuple[str, str, pd.Timestamp], pd.DataFrame] = {}
+        # داده‌های کامل فقط یک بار بارگذاری می‌شوند؛ بدون کش برش‌ها
+        self._full_data: Dict[Tuple[str, str], pd.DataFrame] = {}
 
     # ------------------------------------------------------------------
-    # بارگذاری یک‌بار داده و ساخت حافظه
+    # بارگذاری یک‌بار داده
     # ------------------------------------------------------------------
     def _load_all_data(self, start_date=None, end_date=None) -> None:
-        """بارگذاری کامل همه DataFrameها یک بار و ذخیره در self._data_cache."""
+        """بارگذاری کامل داده‌ها فقط یک بار و نگهداری مرجع DataFrame."""
         for symbol in self.symbols:
             for tf in [config.TIMEFRAME_4H, config.TIMEFRAME_1H, config.TIMEFRAME_5M]:
                 df = self.provider.get_ohlcv(symbol, tf, start_date, end_date)
                 if not df.empty:
                     df = df.sort_index()
-                self._data_cache[(symbol, tf)] = df
+                self._full_data[(symbol, tf)] = df
 
-    def _get_data(self, symbol: str, timeframe: str) -> pd.DataFrame:
-        """بازگرداندن DataFrame از حافظه."""
-        return self._data_cache.get((symbol, timeframe), pd.DataFrame())
+    def _get_full_data(self, symbol: str, timeframe: str) -> pd.DataFrame:
+        """بازگرداندن DataFrame کامل بدون کپی اضافه."""
+        return self._full_data.get((symbol, timeframe), pd.DataFrame())
 
-    def _get_closed_slice_cached(
+    def _get_closed_slice_fast(
         self,
         symbol: str,
         timeframe: str,
         decision_time: pd.Timestamp,
     ) -> pd.DataFrame:
         """
-        دریافت برش بسته‌شده تا decision_time با استفاده از حافظه.
+        دریافت کندل‌های بسته‌شده تا decision_time با استفاده از searchsorted.
 
-        این تابع از کش استفاده می‌کند و داده را دوباره slice نمی‌کند.
+        هیچ DataFrame در کش ذخیره نمی‌شود.
         """
-        key = (symbol, timeframe, decision_time)
-        if key in self._closed_slice_cache:
-            return self._closed_slice_cache[key]
-
-        df = self._get_data(symbol, timeframe)
+        df = self._get_full_data(symbol, timeframe)
         if df.empty:
-            result = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-        else:
-            delta = _timeframe_to_timedelta(timeframe)
-            # فقط کندل‌هایی که end_time <= decision_time
-            mask = df.index + delta <= decision_time
-            result = df.loc[mask]
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
-        self._closed_slice_cache[key] = result
-        return result
+        delta = _timeframe_to_timedelta(timeframe)
+        limit_ts = decision_time - delta
+
+        pos = df.index.searchsorted(limit_ts, side="right") - 1
+        if pos < 0:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+        return df.iloc[: pos + 1]
 
     def _get_all_decision_times(self) -> List[pd.Timestamp]:
         """ترکیب زمان‌های بسته‌شدن کندل‌های 5m همه Symbolها."""
         times = set()
         for symbol in self.symbols:
-            df = self._get_data(symbol, config.TIMEFRAME_5M)
+            df = self._get_full_data(symbol, config.TIMEFRAME_5M)
             if df.empty:
                 continue
             delta = _timeframe_to_timedelta(config.TIMEFRAME_5M)
@@ -157,13 +157,12 @@ class HistoricalBacktestRunner:
     # اجرای Backtest
     # ------------------------------------------------------------------
     def run(self, start_date=None, end_date=None):
-        # بارگذاری یک‌بار داده
         self._load_all_data(start_date, end_date)
 
         data_quality_report = {}
         for symbol in self.symbols:
             for tf in [config.TIMEFRAME_4H, config.TIMEFRAME_1H, config.TIMEFRAME_5M]:
-                df = self._get_data(symbol, tf)
+                df = self._get_full_data(symbol, tf)
                 data_quality_report[f"{symbol}:{tf}"] = validate_ohlcv(df, tf)
 
         decision_times = self._get_all_decision_times()
@@ -176,7 +175,7 @@ class HistoricalBacktestRunner:
 
             # مدیریت خروج پوزیشن‌های باز
             for sym in list(self.open_positions.keys()):
-                closed = self._try_exit_cached(self.open_positions[sym], decision_time)
+                closed = self._try_exit_fast(self.open_positions[sym], decision_time)
                 if closed:
                     del self.open_positions[sym]
 
@@ -188,14 +187,13 @@ class HistoricalBacktestRunner:
                 if symbol in self.open_positions:
                     continue
 
-                # حجم 24 ساعته از Provider (در Backtest واقعی از پیش‌فرض یا تاریخچه)
                 volume = self.provider.get_volume_24h_usdt(symbol, decision_time)
                 if volume is None or volume < MIN_24H_VOLUME_USDT:
                     continue
 
-                df_4h = self._get_closed_slice_cached(symbol, config.TIMEFRAME_4H, decision_time)
-                df_1h = self._get_closed_slice_cached(symbol, config.TIMEFRAME_1H, decision_time)
-                df_5m = self._get_closed_slice_cached(symbol, config.TIMEFRAME_5M, decision_time)
+                df_4h = self._get_closed_slice_fast(symbol, config.TIMEFRAME_4H, decision_time)
+                df_1h = self._get_closed_slice_fast(symbol, config.TIMEFRAME_1H, decision_time)
+                df_5m = self._get_closed_slice_fast(symbol, config.TIMEFRAME_5M, decision_time)
 
                 if df_5m.empty:
                     continue
@@ -238,7 +236,7 @@ class HistoricalBacktestRunner:
             self.selected_count += len(selected)
 
             for best in selected:
-                ok, reason = self._safety_check_cached(best, decision_time)
+                ok, reason = self._safety_check_fast(best, decision_time)
                 if not ok:
                     self.safety_rejections += 1
                     continue
@@ -270,7 +268,7 @@ class HistoricalBacktestRunner:
 
         # بستن پوزیشن‌های باز باقی‌مانده
         for sym in list(self.open_positions.keys()):
-            self._close_at_end_cached(self.open_positions[sym], end_date)
+            self._close_at_end_fast(self.open_positions[sym], end_date)
             del self.open_positions[sym]
 
         # ساخت equity curve
@@ -280,17 +278,19 @@ class HistoricalBacktestRunner:
             equity_times.append(trade["exit_time"])
             balances.append(trade["balance_after"])
         if equity_times:
-            self.equity_curve = [{"timestamp": t, "balance": b} for t, b in zip(equity_times, balances)]
+            self.equity_curve = [
+                {"timestamp": t, "balance": b}
+                for t, b in zip(equity_times, balances)
+            ]
 
-        metrics = self._compute_metrics()
-        return metrics
+        return self._compute_metrics()
 
     # ------------------------------------------------------------------
-    # خروج پوزیشن‌ها با استفاده از داده کش‌شده
+    # خروج پوزیشن‌ها
     # ------------------------------------------------------------------
-    def _try_exit_cached(self, position: Dict[str, Any], decision_time: pd.Timestamp) -> bool:
+    def _try_exit_fast(self, position: Dict[str, Any], decision_time: pd.Timestamp) -> bool:
         symbol = position["symbol"]
-        df_5m = self._get_closed_slice_cached(symbol, config.TIMEFRAME_5M, decision_time)
+        df_5m = self._get_closed_slice_fast(symbol, config.TIMEFRAME_5M, decision_time)
         if df_5m.empty:
             return False
         candle = df_5m.iloc[-1]
@@ -325,19 +325,16 @@ class HistoricalBacktestRunner:
         self._close_position(position, exit_price, exit_reason, decision_time)
         return True
 
-    def _close_at_end_cached(self, position: Dict[str, Any], end_date: Optional[pd.Timestamp]):
+    def _close_at_end_fast(self, position: Dict[str, Any], end_date: Optional[pd.Timestamp]):
         symbol = position["symbol"]
-        df_5m = self._get_data(symbol, config.TIMEFRAME_5M)
+        df_5m = self._get_full_data(symbol, config.TIMEFRAME_5M)
         if df_5m.empty:
             close_price = position["entry_price"]
         else:
             close_price = df_5m.iloc[-1]["close"]
         self._close_position(position, close_price, "END", pd.Timestamp.now(timezone.utc))
 
-    # ------------------------------------------------------------------
-    # Safety Check با داده کش‌شده
-    # ------------------------------------------------------------------
-    def _safety_check_cached(self, best: Dict[str, Any], decision_time: pd.Timestamp) -> Tuple[bool, str]:
+    def _safety_check_fast(self, best: Dict[str, Any], decision_time: pd.Timestamp) -> Tuple[bool, str]:
         symbol = best.get("symbol")
         volume = self.provider.get_volume_24h_usdt(symbol, decision_time)
         if volume is None or volume < MIN_24H_VOLUME_USDT:
@@ -415,22 +412,22 @@ class HistoricalBacktestRunner:
 
         def _m(trades):
             if not trades:
-                return {"trades":0,"win_rate":0.0,"net_profit":0.0,"profit_factor":float("inf"),"average_r":0.0}
+                return {"trades": 0, "win_rate": 0.0, "net_profit": 0.0, "profit_factor": float("inf"), "average_r": 0.0}
             m = calculate_metrics(trades, [], initial_balance=None)
-            return {"trades":m["total_trades"],"win_rate":m["win_rate"],"net_profit":m["net_profit"],"profit_factor":m["profit_factor"],"average_r":m["average_r"]}
+            return {"trades": m["total_trades"], "win_rate": m["win_rate"], "net_profit": m["net_profit"], "profit_factor": m["profit_factor"], "average_r": m["average_r"]}
 
         symbol_metrics = {}
         for sym in self.symbols:
-            symbol_metrics[sym] = _m([t for t in self.trades if t["symbol"]==sym])
+            symbol_metrics[sym] = _m([t for t in self.trades if t["symbol"] == sym])
 
         regime_metrics = {}
-        for r in ["BULLISH","BEARISH","RANGE"]:
+        for r in ["BULLISH", "BEARISH", "RANGE"]:
             if r == "BULLISH":
-                rt = [t for t in self.trades if t["regime_4h"]=="BULLISH" and t["regime_1h"]=="BULLISH"]
+                rt = [t for t in self.trades if t["regime_4h"] == "BULLISH" and t["regime_1h"] == "BULLISH"]
             elif r == "BEARISH":
-                rt = [t for t in self.trades if t["regime_4h"]=="BEARISH" and t["regime_1h"]=="BEARISH"]
+                rt = [t for t in self.trades if t["regime_4h"] == "BEARISH" and t["regime_1h"] == "BEARISH"]
             else:
-                rt = [t for t in self.trades if not ((t["regime_4h"]=="BULLISH" and t["regime_1h"]=="BULLISH") or (t["regime_4h"]=="BEARISH" and t["regime_1h"]=="BEARISH"))]
+                rt = [t for t in self.trades if not ((t["regime_4h"] == "BULLISH" and t["regime_1h"] == "BULLISH") or (t["regime_4h"] == "BEARISH" and t["regime_1h"] == "BEARISH"))]
             regime_metrics[r] = _m(rt)
 
         period_metrics = {}
@@ -458,4 +455,3 @@ class HistoricalBacktestRunner:
             "period_metrics": period_metrics,
             "trades": self.trades,
         }
-        
