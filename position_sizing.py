@@ -13,25 +13,26 @@ def calculate_position_size(
     risk_per_trade: float,
     entry_price: float,
     stop_loss: float,
-    leverage: Optional[float] = None,
     allocation: float = 0.25,
     max_leverage: float = 20.0,
+    leverage: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
-    محاسبه حجم معامله، مارجین و لوریج.
+    محاسبه حجم معامله، مارجین و لوریج موردنیاز.
 
-    دو حالت:
-    1) اگر leverage داده شده باشد (سازگار با نسخه قبلی):
-       از لوریج ثابت استفاده می‌شود و خروجی شامل کلیدهای
-       risk_amount، stop_distance، position_size، position_value،
-       margin_required و leverage است.
+    پارامترها:
+        account_balance: موجودی کل حساب (USDT)
+        risk_per_trade: درصد ریسک از کل حساب
+        entry_price: قیمت ورود
+        stop_loss: قیمت حد ضرر
+        allocation: درصد تخصیص از سرمایه به این معامله
+        max_leverage: حداکثر لوریج مجاز
+        leverage: (اختیاری) اگر ارائه شود، رفتار قدیمی با لوریج ثابت فعال می‌شود
 
-    2) اگر allocation داده شده باشد و leverage=None:
-       ریسک هر معامله = account_balance * risk_per_trade
-       مارجین مجاز = account_balance * allocation
-       لوریج = risk_amount / (margin_allocation * stop_distance_pct)
-       خروجی شامل margin_allocation، required_leverage، leverage،
-       notional_position_value و ... است.
+    خروجی:
+        dict شامل valid, risk_amount, margin_allocation, required_leverage,
+        leverage, notional_position_value, position_size, position_value,
+        stop_distance, stop_distance_pct, expected_loss_at_sl
     """
     # اعتبارسنجی عمومی
     if account_balance <= 0:
@@ -50,7 +51,7 @@ def calculate_position_size(
 
     risk_amount = account_balance * risk_per_trade
 
-    # ------------------- حالت قدیمی (لوریج ثابت) -------------------
+    # ------------------- حالت قدیمی (سازگاری) -------------------
     if leverage is not None:
         if leverage <= 0:
             return {"valid": False, "reason": "Leverage must be positive"}
