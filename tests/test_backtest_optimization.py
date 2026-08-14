@@ -35,7 +35,6 @@ def _make_df(n, freq='5min', start='2025-01-01', close=100.0):
 
 
 def test_precomputed_same_as_original_small():
-    # داده بسیار کوچک؛ نتیجه باید بدون trade باشد یا یکسان
     symbol = 'BTC/USDT:USDT'
     provider = FakeProvider({
         symbol: {
@@ -62,17 +61,16 @@ def test_no_lookahead_future_candle():
     }, {symbol: 2_000_000})
 
     runner = OptimizedBacktestRunner(provider, [symbol], initial_balance=1000)
-    # دسترسی به precompute برای تست mapping
     runner._precompute_symbol(symbol)
     idx_arr = runner._precomputed[symbol]['5m']['index']
     decision_time = pd.to_datetime(idx_arr[3]) + pd.Timedelta(minutes=5)
-    # باید فقط 4 کندل بسته‌شده باشد
-    rsi = runner._latest_value_at(symbol, '5m', decision_time, 'rsi')
-    assert rsi is not None
-    # ایندکس 5 هنوز بسته نشده
+    # بررسی mapping با کلید close (نه rsi که ممکن است NaN باشد)
+    close_val = runner._latest_value_at(symbol, '5m', decision_time, 'close')
+    assert close_val is not None
+    # ایندکس 5 هنوز در دسترس نیست
     later_time = pd.to_datetime(idx_arr[4]) + pd.Timedelta(minutes=5)
-    rsi_later = runner._latest_value_at(symbol, '5m', later_time, 'rsi')
-    assert rsi_later is not None
+    later_close = runner._latest_value_at(symbol, '5m', later_time, 'close')
+    assert later_close is not None
     assert decision_time < later_time
 
 
@@ -81,7 +79,11 @@ def test_sl_first():
     provider = FakeProvider({
         symbol: {
             '5m': pd.DataFrame({
-                'open':[100,100,100], 'high':[111,111,111], 'low':[94,94,94], 'close':[100,100,100], 'volume':[100,100,100]
+                'open':[100,100,100],
+                'high':[111,111,111],
+                'low':[94,94,94],
+                'close':[100,100,100],
+                'volume':[100,100,100]
             }, index=pd.date_range('2025-01-01', periods=3, freq='5min', tz='UTC')),
             '1h': _make_df(2, '1h'),
             '4h': _make_df(1, '4h'),
@@ -89,21 +91,33 @@ def test_sl_first():
     }, {symbol: 2_000_000})
     runner = OptimizedBacktestRunner(provider, [symbol], initial_balance=1000)
     runner._precompute_symbol(symbol)
-    # simulate position and candle
-    candle = runner._get_precomputed_candle(symbol, '5m', pd.to_datetime(runner._precomputed[symbol]['5m']['index'][1]) + pd.Timedelta(minutes=5))
+
+    candle = runner._get_precomputed_candle(
+        symbol,
+        '5m',
+        pd.to_datetime(runner._precomputed[symbol]['5m']['index'][1]) + pd.Timedelta(minutes=5)
+    )
     assert candle['high'] == 111
     assert candle['low'] == 94
-    # SL first logic در _try_exit_fast تست می‌شود
+
     position = {
         'symbol': symbol,
         'direction': 'LONG',
+        'entry_time': pd.Timestamp('2025-01-01 00:05:00', tz='UTC'),
         'entry_price': 100,
         'stop_loss': 95,
         'take_profit': 110,
         'position_size': 1,
         'risk_amount': 10,
+        'score': None,
+        'regime_4h': 'BULLISH',
+        'regime_1h': 'BULLISH',
     }
-    closed = runner._try_exit_fast(position, pd.to_datetime(runner._precomputed[symbol]['5m']['index'][1]) + pd.Timedelta(minutes=5))
+
+    closed = runner._try_exit_fast(
+        position,
+        pd.to_datetime(runner._precomputed[symbol]['5m']['index'][1]) + pd.Timedelta(minutes=5)
+    )
     assert closed is True
     assert runner.trades[-1]['exit_reason'] == 'SL'
     assert runner.trades[-1]['exit_price'] == 95
