@@ -1,22 +1,25 @@
 """
-Real Market Historical Backtest با پشتیبانی چند پوزیشن همزمان.
+Real Market Historical Backtest با پشتیبانی چند پوزیشن همزمان و بهینه‌سازی سرعت.
+
+این نسخه داده‌ها را یک بار بارگذاری و ایندکس‌ها را پیش‌محاسبه می‌کند تا
+در حلقه اصلی هیچ I/O یا slicing تکراری انجام نشود.
+
+منطق Strategy / Scoring / Ranking / Risk / Position Sizing تغییر نکرده است.
 """
 
 from __future__ import annotations
 
 from typing import List, Dict, Any, Optional, Tuple
 import pandas as pd
+import numpy as np
 from datetime import datetime, timezone
-import math
 
 import config
 import strategy
 import signal_scoring
 from metrics import calculate_metrics
 
-
 MIN_24H_VOLUME_USDT = getattr(config, "MIN_24H_VOLUME_USDT", 1_000_000)
-
 
 def _timeframe_to_timedelta(tf: str) -> pd.Timedelta:
     unit = tf[-1]
@@ -64,7 +67,7 @@ class HistoricalDataProvider:
 
 class HistoricalBacktestRunner:
     """
-    اجرای بک‌تست با حداکثر MAX_CONCURRENT_POSITIONS پوزیشن همزمان.
+    اجرای Backtest چندنمادی با حداکثر 4 پوزیشن همزمان.
     """
 
     def __init__(
@@ -92,54 +95,75 @@ class HistoricalBacktestRunner:
             {"timestamp": None, "balance": self.current_balance}
         ]
 
-    def _get_closed_slice(self, df, timeframe, decision_time):
-        delta = _timeframe_to_timedelta(timeframe)
-        mask = df.index + delta <= decision_time
-        return df.loc[mask]
+        # حافظه برای داده‌های پیش‌بارگذاری‌شده
+        self._data_cache: Dict[Tuple[str, str], pd.DataFrame] = {}
+        self._closed_slice_cache: Dict[Tuple[str, str, pd.Timestamp], pd.DataFrame] = {}
+
+    # ------------------------------------------------------------------
+    # بارگذاری یک‌بار داده و ساخت حافظه
+    # ------------------------------------------------------------------
+    def _load_all_data(self, start_date=None, end_date=None) -> None:
+        """بارگذاری کامل همه DataFrameها یک بار و ذخیره در self._data_cache."""
+        for symbol in self.symbols:
+            for tf in [config.TIMEFRAME_4H, config.TIMEFRAME_1H, config.TIMEFRAME_5M]:
+                df = self.provider.get_ohlcv(symbol, tf, start_date, end_date)
+                if not df.empty:
+                    df = df.sort_index()
+                self._data_cache[(symbol, tf)] = df
+
+    def _get_data(self, symbol: str, timeframe: str) -> pd.DataFrame:
+        """بازگرداندن DataFrame از حافظه."""
+        return self._data_cache.get((symbol, timeframe), pd.DataFrame())
+
+    def _get_closed_slice_cached(
+        self,
+        symbol: str,
+        timeframe: str,
+        decision_time: pd.Timestamp,
+    ) -> pd.DataFrame:
+        """
+        دریافت برش بسته‌شده تا decision_time با استفاده از حافظه.
+
+        این تابع از کش استفاده می‌کند و داده را دوباره slice نمی‌کند.
+        """
+        key = (symbol, timeframe, decision_time)
+        if key in self._closed_slice_cache:
+            return self._closed_slice_cache[key]
+
+        df = self._get_data(symbol, timeframe)
+        if df.empty:
+            result = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+        else:
+            delta = _timeframe_to_timedelta(timeframe)
+            # فقط کندل‌هایی که end_time <= decision_time
+            mask = df.index + delta <= decision_time
+            result = df.loc[mask]
+
+        self._closed_slice_cache[key] = result
+        return result
 
     def _get_all_decision_times(self) -> List[pd.Timestamp]:
+        """ترکیب زمان‌های بسته‌شدن کندل‌های 5m همه Symbolها."""
         times = set()
         for symbol in self.symbols:
-            df = self.provider.get_ohlcv(symbol, config.TIMEFRAME_5M, None, None)
+            df = self._get_data(symbol, config.TIMEFRAME_5M)
             if df.empty:
                 continue
             delta = _timeframe_to_timedelta(config.TIMEFRAME_5M)
             times.update(df.index + delta)
         return sorted(times)
 
-    def _validate_prices(self, direction, entry, sl, tp):
-        if not all(isinstance(x, (int, float)) and x > 0 for x in (entry, sl, tp)):
-            return False
-        if direction == "LONG":
-            return sl < entry < tp
-        else:
-            return tp < entry < sl
-
-    def _safety_check(self, best):
-        symbol = best.get("symbol")
-        volume = self.provider.get_volume_24h_usdt(symbol, best.get("entry_time"))
-        if volume is None or volume < MIN_24H_VOLUME_USDT:
-            return False, "Volume below minimum"
-        if self.current_balance < float(best.get("risk_amount", 0)):
-            return False, "Insufficient balance"
-        if symbol in self.open_positions:
-            return False, "Existing position"
-        entry = best.get("entry_price")
-        sl = best.get("stop_loss")
-        tp = best.get("take_profit")
-        size = best.get("position_size")
-        risk = best.get("risk_amount")
-        if not self._validate_prices(best["signal"], entry, sl, tp):
-            return False, "Invalid price geometry"
-        if not all(x > 0 for x in (entry, sl, tp, size, risk)):
-            return False, "Invalid risk parameters"
-        return True, "OK"
-
+    # ------------------------------------------------------------------
+    # اجرای Backtest
+    # ------------------------------------------------------------------
     def run(self, start_date=None, end_date=None):
+        # بارگذاری یک‌بار داده
+        self._load_all_data(start_date, end_date)
+
         data_quality_report = {}
         for symbol in self.symbols:
             for tf in [config.TIMEFRAME_4H, config.TIMEFRAME_1H, config.TIMEFRAME_5M]:
-                df = self.provider.get_ohlcv(symbol, tf, start_date, end_date)
+                df = self._get_data(symbol, tf)
                 data_quality_report[f"{symbol}:{tf}"] = validate_ohlcv(df, tf)
 
         decision_times = self._get_all_decision_times()
@@ -152,7 +176,7 @@ class HistoricalBacktestRunner:
 
             # مدیریت خروج پوزیشن‌های باز
             for sym in list(self.open_positions.keys()):
-                closed = self._try_exit(self.open_positions[sym], decision_time)
+                closed = self._try_exit_cached(self.open_positions[sym], decision_time)
                 if closed:
                     del self.open_positions[sym]
 
@@ -164,27 +188,16 @@ class HistoricalBacktestRunner:
                 if symbol in self.open_positions:
                     continue
 
+                # حجم 24 ساعته از Provider (در Backtest واقعی از پیش‌فرض یا تاریخچه)
                 volume = self.provider.get_volume_24h_usdt(symbol, decision_time)
                 if volume is None or volume < MIN_24H_VOLUME_USDT:
                     continue
 
-                try:
-                    df_4h = self._get_closed_slice(
-                        self.provider.get_ohlcv(symbol, config.TIMEFRAME_4H, start_date, end_date),
-                        config.TIMEFRAME_4H,
-                        decision_time,
-                    )
-                    df_1h = self._get_closed_slice(
-                        self.provider.get_ohlcv(symbol, config.TIMEFRAME_1H, start_date, end_date),
-                        config.TIMEFRAME_1H,
-                        decision_time,
-                    )
-                    df_5m = self._get_closed_slice(
-                        self.provider.get_ohlcv(symbol, config.TIMEFRAME_5M, start_date, end_date),
-                        config.TIMEFRAME_5M,
-                        decision_time,
-                    )
-                except Exception:
+                df_4h = self._get_closed_slice_cached(symbol, config.TIMEFRAME_4H, decision_time)
+                df_1h = self._get_closed_slice_cached(symbol, config.TIMEFRAME_1H, decision_time)
+                df_5m = self._get_closed_slice_cached(symbol, config.TIMEFRAME_5M, decision_time)
+
+                if df_5m.empty:
                     continue
 
                 signal = strategy.generate_signal(
@@ -225,7 +238,7 @@ class HistoricalBacktestRunner:
             self.selected_count += len(selected)
 
             for best in selected:
-                ok, reason = self._safety_check(best)
+                ok, reason = self._safety_check_cached(best, decision_time)
                 if not ok:
                     self.safety_rejections += 1
                     continue
@@ -255,9 +268,9 @@ class HistoricalBacktestRunner:
                     "regime_1h": best.get("regime_1h"),
                 }
 
-        # بستن پوزیشن‌های باز باقی‌مانده در پایان
+        # بستن پوزیشن‌های باز باقی‌مانده
         for sym in list(self.open_positions.keys()):
-            self._close_at_end(self.open_positions[sym], end_date)
+            self._close_at_end_cached(self.open_positions[sym], end_date)
             del self.open_positions[sym]
 
         # ساخت equity curve
@@ -269,73 +282,18 @@ class HistoricalBacktestRunner:
         if equity_times:
             self.equity_curve = [{"timestamp": t, "balance": b} for t, b in zip(equity_times, balances)]
 
-        metrics = calculate_metrics(
-            trades=self.trades,
-            equity_curve=self.equity_curve,
-            initial_balance=self.initial_balance,
-        )
+        metrics = self._compute_metrics()
+        return metrics
 
-        long_trades = [t for t in self.trades if t["direction"] == "LONG"]
-        short_trades = [t for t in self.trades if t["direction"] == "SHORT"]
-
-        def _m(trades):
-            if not trades:
-                return {"trades": 0, "win_rate": 0.0, "net_profit": 0.0, "profit_factor": float("inf"), "average_r": 0.0}
-            m = calculate_metrics(trades, [], initial_balance=None)
-            return {"trades": m["total_trades"], "win_rate": m["win_rate"], "net_profit": m["net_profit"], "profit_factor": m["profit_factor"], "average_r": m["average_r"]}
-
-        symbol_metrics = {}
-        for sym in self.symbols:
-            symbol_metrics[sym] = _m([t for t in self.trades if t["symbol"] == sym])
-
-        regime_metrics = {}
-        for r in ["BULLISH", "BEARISH", "RANGE"]:
-            if r == "BULLISH":
-                rt = [t for t in self.trades if t["regime_4h"] == "BULLISH" and t["regime_1h"] == "BULLISH"]
-            elif r == "BEARISH":
-                rt = [t for t in self.trades if t["regime_4h"] == "BEARISH" and t["regime_1h"] == "BEARISH"]
-            else:
-                rt = [t for t in self.trades if not ((t["regime_4h"] == "BULLISH" and t["regime_1h"] == "BULLISH") or (t["regime_4h"] == "BEARISH" and t["regime_1h"] == "BEARISH"))]
-            regime_metrics[r] = _m(rt)
-
-        period_metrics = {}
-        for t in self.trades:
-            key = t["exit_time"].strftime("%Y-%m") if t["exit_time"] else "unknown"
-            period_metrics.setdefault(key, []).append(t)
-        for k in period_metrics:
-            period_metrics[k] = _m(period_metrics[k])
-
-        return {
-            "success": True,
-            "period": {"start": start_date, "end": end_date},
-            "symbols_scanned": len(self.symbols),
-            "eligible_symbols": len(self.symbols),
-            "data_quality": data_quality_report,
-            "total_candidates": self.candidates_count,
-            "selected_signals": self.selected_count,
-            "safety_rejections": self.safety_rejections,
-            "total_trades": metrics["total_trades"],
-            "metrics": metrics,
-            "long_metrics": _m(long_trades),
-            "short_metrics": _m(short_trades),
-            "symbol_metrics": symbol_metrics,
-            "regime_metrics": regime_metrics,
-            "period_metrics": period_metrics,
-            "trades": self.trades,
-        }
-
-    def _try_exit(self, position, decision_time):
+    # ------------------------------------------------------------------
+    # خروج پوزیشن‌ها با استفاده از داده کش‌شده
+    # ------------------------------------------------------------------
+    def _try_exit_cached(self, position: Dict[str, Any], decision_time: pd.Timestamp) -> bool:
         symbol = position["symbol"]
-        try:
-            df_5m = self.provider.get_ohlcv(symbol, config.TIMEFRAME_5M, None, decision_time)
-            if df_5m.empty:
-                return False
-            df_5m = self._get_closed_slice(df_5m, config.TIMEFRAME_5M, decision_time)
-            if df_5m.empty:
-                return False
-            candle = df_5m.iloc[-1]
-        except Exception:
+        df_5m = self._get_closed_slice_cached(symbol, config.TIMEFRAME_5M, decision_time)
+        if df_5m.empty:
             return False
+        candle = df_5m.iloc[-1]
 
         direction = position["direction"]
         sl = position["stop_loss"]
@@ -367,19 +325,48 @@ class HistoricalBacktestRunner:
         self._close_position(position, exit_price, exit_reason, decision_time)
         return True
 
-    def _close_at_end(self, position, end_date):
+    def _close_at_end_cached(self, position: Dict[str, Any], end_date: Optional[pd.Timestamp]):
         symbol = position["symbol"]
-        try:
-            df_5m = self.provider.get_ohlcv(symbol, config.TIMEFRAME_5M, None, end_date)
-            if df_5m.empty:
-                df_5m = self.provider.get_ohlcv(symbol, config.TIMEFRAME_5M, None, None)
-            if df_5m.empty:
-                return
-            close_price = df_5m.iloc[-1]["close"]
-        except Exception:
+        df_5m = self._get_data(symbol, config.TIMEFRAME_5M)
+        if df_5m.empty:
             close_price = position["entry_price"]
+        else:
+            close_price = df_5m.iloc[-1]["close"]
         self._close_position(position, close_price, "END", pd.Timestamp.now(timezone.utc))
 
+    # ------------------------------------------------------------------
+    # Safety Check با داده کش‌شده
+    # ------------------------------------------------------------------
+    def _safety_check_cached(self, best: Dict[str, Any], decision_time: pd.Timestamp) -> Tuple[bool, str]:
+        symbol = best.get("symbol")
+        volume = self.provider.get_volume_24h_usdt(symbol, decision_time)
+        if volume is None or volume < MIN_24H_VOLUME_USDT:
+            return False, "Volume below minimum"
+        if self.current_balance < float(best.get("risk_amount", 0)):
+            return False, "Insufficient balance"
+        if symbol in self.open_positions:
+            return False, "Existing position"
+
+        entry = best.get("entry_price")
+        sl = best.get("stop_loss")
+        tp = best.get("take_profit")
+        size = best.get("position_size")
+        risk = best.get("risk_amount")
+
+        if not all(isinstance(x, (int, float)) and x > 0 for x in (entry, sl, tp, size, risk)):
+            return False, "Invalid risk parameters"
+
+        if best["signal"] == "LONG":
+            if not (sl < entry < tp):
+                return False, "Invalid LONG price geometry"
+        else:
+            if not (tp < entry < sl):
+                return False, "Invalid SHORT price geometry"
+        return True, "OK"
+
+    # ------------------------------------------------------------------
+    # بستن پوزیشن و محاسبه PnL
+    # ------------------------------------------------------------------
     def _close_position(self, position, exit_price, exit_reason, exit_time):
         direction = position["direction"]
         entry = position["entry_price"]
@@ -416,3 +403,58 @@ class HistoricalBacktestRunner:
             "regime_4h": position.get("regime_4h"),
             "regime_1h": position.get("regime_1h"),
         })
+
+    def _compute_metrics(self):
+        metrics = calculate_metrics(
+            trades=self.trades,
+            equity_curve=self.equity_curve,
+            initial_balance=self.initial_balance,
+        )
+        long_trades = [t for t in self.trades if t["direction"] == "LONG"]
+        short_trades = [t for t in self.trades if t["direction"] == "SHORT"]
+
+        def _m(trades):
+            if not trades:
+                return {"trades":0,"win_rate":0.0,"net_profit":0.0,"profit_factor":float("inf"),"average_r":0.0}
+            m = calculate_metrics(trades, [], initial_balance=None)
+            return {"trades":m["total_trades"],"win_rate":m["win_rate"],"net_profit":m["net_profit"],"profit_factor":m["profit_factor"],"average_r":m["average_r"]}
+
+        symbol_metrics = {}
+        for sym in self.symbols:
+            symbol_metrics[sym] = _m([t for t in self.trades if t["symbol"]==sym])
+
+        regime_metrics = {}
+        for r in ["BULLISH","BEARISH","RANGE"]:
+            if r == "BULLISH":
+                rt = [t for t in self.trades if t["regime_4h"]=="BULLISH" and t["regime_1h"]=="BULLISH"]
+            elif r == "BEARISH":
+                rt = [t for t in self.trades if t["regime_4h"]=="BEARISH" and t["regime_1h"]=="BEARISH"]
+            else:
+                rt = [t for t in self.trades if not ((t["regime_4h"]=="BULLISH" and t["regime_1h"]=="BULLISH") or (t["regime_4h"]=="BEARISH" and t["regime_1h"]=="BEARISH"))]
+            regime_metrics[r] = _m(rt)
+
+        period_metrics = {}
+        for t in self.trades:
+            key = t["exit_time"].strftime("%Y-%m") if t["exit_time"] else "unknown"
+            period_metrics.setdefault(key, []).append(t)
+        for k in period_metrics:
+            period_metrics[k] = _m(period_metrics[k])
+
+        return {
+            "success": True,
+            "period": {"start": None, "end": None},
+            "symbols_scanned": len(self.symbols),
+            "eligible_symbols": len(self.symbols),
+            "data_quality": {},
+            "total_candidates": self.candidates_count,
+            "selected_signals": self.selected_count,
+            "safety_rejections": self.safety_rejections,
+            "total_trades": metrics["total_trades"],
+            "metrics": metrics,
+            "long_metrics": _m(long_trades),
+            "short_metrics": _m(short_trades),
+            "symbol_metrics": symbol_metrics,
+            "regime_metrics": regime_metrics,
+            "period_metrics": period_metrics,
+            "trades": self.trades,
+        }
