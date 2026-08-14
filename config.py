@@ -11,7 +11,7 @@ load_dotenv()
 # صرافی
 EXCHANGE_ID = 'gateio'
 EXCHANGE_OPTIONS = {
-    'defaultType': 'swap',  # perpetual futures
+    'defaultType': 'swap',
     'apiKey': os.getenv('GATEIO_API_KEY', ''),
     'secret': os.getenv('GATEIO_SECRET', ''),
 }
@@ -69,4 +69,3 @@ MAX_CONCURRENT_POSITIONS = 4   # حداکثر ۴ پوزیشن همزمان
 MAX_TOTAL_RISK = 0.04          # حداکثر ریسک کل ۴٪
 
 ACCOUNT_BALANCE = 1000.0
-LEVERAGE = 20                  # لوریج قدیمی (برای سازگاری)
