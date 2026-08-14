@@ -13,46 +13,70 @@ def calculate_position_size(
     risk_per_trade: float,
     entry_price: float,
     stop_loss: float,
+    leverage: Optional[float] = None,
     allocation: float = 0.25,
     max_leverage: float = 20.0,
 ) -> Dict[str, Any]:
     """
-    محاسبه حجم معامله، مارجین و لوریج موردنیاز.
+    محاسبه حجم معامله، مارجین و لوریج.
 
-    ریسک هر معامله = account_balance * risk_per_trade
-    مارجین مجاز = account_balance * allocation
-    لوریج = risk_amount / (margin_allocation * stop_distance_pct)
+    دو حالت:
+    1) اگر leverage داده شده باشد (سازگار با نسخه قبلی):
+       از لوریج ثابت استفاده می‌شود و خروجی شامل کلیدهای
+       risk_amount، stop_distance، position_size، position_value،
+       margin_required و leverage است.
 
-    خروجی شامل:
-        valid, risk_amount, margin_allocation, required_leverage, leverage,
-        notional_position_value, position_size, position_value,
-        stop_distance, stop_distance_pct, expected_loss_at_sl
+    2) اگر allocation داده شده باشد و leverage=None:
+       ریسک هر معامله = account_balance * risk_per_trade
+       مارجین مجاز = account_balance * allocation
+       لوریج = risk_amount / (margin_allocation * stop_distance_pct)
+       خروجی شامل margin_allocation، required_leverage، leverage،
+       notional_position_value و ... است.
     """
-    # اعتبارسنجی ورودی‌ها
+    # اعتبارسنجی عمومی
     if account_balance <= 0:
         return {"valid": False, "reason": "Account balance must be positive"}
     if risk_per_trade <= 0 or risk_per_trade >= 1:
         return {"valid": False, "reason": "Risk per trade must be between 0 and 1"}
-    if allocation <= 0 or allocation > 1:
-        return {"valid": False, "reason": "Allocation must be between 0 and 1"}
     if entry_price <= 0 or stop_loss <= 0:
         return {"valid": False, "reason": "Entry and stop loss must be positive"}
     if entry_price == stop_loss:
         return {"valid": False, "reason": "Entry price equals stop loss"}
-    if max_leverage <= 0:
-        return {"valid": False, "reason": "Max leverage must be positive"}
 
-    # محاسبه ریسک و مارجین
-    risk_amount = account_balance * risk_per_trade
-    margin_allocation = account_balance * allocation
-
-    # فاصله حد ضرر
     stop_distance = abs(entry_price - stop_loss)
     stop_distance_pct = stop_distance / entry_price
     if stop_distance_pct <= 0:
         return {"valid": False, "reason": "Invalid stop distance"}
 
-    # لوریج موردنیاز
+    risk_amount = account_balance * risk_per_trade
+
+    # ------------------- حالت قدیمی (لوریج ثابت) -------------------
+    if leverage is not None:
+        if leverage <= 0:
+            return {"valid": False, "reason": "Leverage must be positive"}
+
+        position_size = risk_amount / stop_distance
+        position_value = position_size * entry_price
+        margin_required = position_value / leverage
+
+        return {
+            "valid": True,
+            "risk_amount": risk_amount,
+            "stop_distance": stop_distance,
+            "position_size": position_size,
+            "position_value": position_value,
+            "margin_required": margin_required,
+            "leverage": leverage,
+        }
+
+    # ------------------- حالت داینامیک -------------------
+    if allocation <= 0 or allocation > 1:
+        return {"valid": False, "reason": "Allocation must be between 0 and 1"}
+
+    if max_leverage <= 0:
+        return {"valid": False, "reason": "Max leverage must be positive"}
+
+    margin_allocation = account_balance * allocation
     required_leverage = risk_amount / (margin_allocation * stop_distance_pct)
 
     if required_leverage > max_leverage:
@@ -65,16 +89,10 @@ def calculate_position_size(
     notional_position_value = margin_allocation * leverage
     position_size = notional_position_value / entry_price
     position_value = position_size * entry_price
-
-    # زیان مورد انتظار در SL
     expected_loss_at_sl = notional_position_value * stop_distance_pct
 
-    # تأیید تطابق ریسک
     if not math.isclose(expected_loss_at_sl, risk_amount, rel_tol=0.01):
-        return {
-            "valid": False,
-            "reason": "Risk mismatch after calculation",
-        }
+        return {"valid": False, "reason": "Risk mismatch after calculation"}
 
     return {
         "valid": True,
