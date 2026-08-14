@@ -40,15 +40,13 @@ def test_position_size_from_stop_distance():
 
 
 def test_allocation_cap_rejects_excessive_position():
-    # stop_distance=4%, risk=10 -> size=2.5, notional=250 OK
-    # stop_distance=0.5% -> required leverage > max -> reject
-    res = calculate_position_size(1000, 0.01, 100, 99.5, allocation=0.25, max_leverage=20)
+    # فاصله 0.1٪ => لوریج موردنیاز 40x => بیش از MAX_LEVERAGE
+    res = calculate_position_size(1000, 0.01, 100, 99.9, allocation=0.25, max_leverage=20)
     assert not res["valid"]
     assert "exceeds" in res["reason"]
 
 
 def test_four_positions_max():
-    # شبیه‌سازی با یک PortfolioManager ساده
     from portfolio_manager import PortfolioManager
     pm = PortfolioManager(max_positions=4)
     for i in range(4):
@@ -167,10 +165,8 @@ def test_balance_updates_only_once():
 def test_position_risk_is_fixed_after_entry():
     initial_balance = 1000
     risk_amount = initial_balance * 0.01
-    # بعد از تغییر balance، ریسک معامله قبلی ثابت بماند
     later_balance = 2000
     assert risk_amount == 10
-    # ریسک معامله بعدی بر اساس balance جدید است
     next_risk = later_balance * 0.01
     assert next_risk == 20
 
@@ -178,7 +174,6 @@ def test_position_risk_is_fixed_after_entry():
 def test_no_leverage_risk_multiplication():
     risk = 10
     leverage = 20
-    # لوریج نباید ریسک را ضرب کند
     assert risk * leverage != risk
     assert risk == 10
 
@@ -189,6 +184,5 @@ def test_invalid_position_rejected_safely():
 
 
 def test_no_unrealistic_pnl_explosion():
-    # سناریوی ساده: سود 2R
     pnl = 20
-    assert pnl < 1000  # سود معقول
+    assert pnl < 1000
