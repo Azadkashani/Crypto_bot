@@ -18,21 +18,20 @@ def calculate_position_size(
     leverage: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
-    محاسبه حجم معامله، مارجین و لوریج موردنیاز.
+    محاسبه حجم معامله، مارجین و لوریج.
 
-    پارامترها:
-        account_balance: موجودی کل حساب (USDT)
-        risk_per_trade: درصد ریسک از کل حساب
-        entry_price: قیمت ورود
-        stop_loss: قیمت حد ضرر
-        allocation: درصد تخصیص از سرمایه به این معامله
-        max_leverage: حداکثر لوریج مجاز
-        leverage: (اختیاری) اگر ارائه شود، رفتار قدیمی با لوریج ثابت فعال می‌شود
+    دو حالت:
+    1) اگر leverage داده شده باشد (سازگار با نسخه قبلی):
+       از لوریج ثابت استفاده می‌شود و خروجی شامل کلیدهای
+       risk_amount، stop_distance، position_size، position_value،
+       margin_required و leverage است.
 
-    خروجی:
-        dict شامل valid, risk_amount, margin_allocation, required_leverage,
-        leverage, notional_position_value, position_size, position_value,
-        stop_distance, stop_distance_pct, expected_loss_at_sl
+    2) اگر allocation داده شده باشد و leverage=None:
+       ریسک هر معامله = account_balance * risk_per_trade
+       مارجین مجاز = account_balance * allocation
+       لوریج = risk_amount / (margin_allocation * stop_distance_pct)
+       خروجی شامل margin_allocation، required_leverage، leverage،
+       notional_position_value، position_size، position_value و ... است.
     """
     # اعتبارسنجی عمومی
     if account_balance <= 0:
@@ -51,7 +50,7 @@ def calculate_position_size(
 
     risk_amount = account_balance * risk_per_trade
 
-    # ------------------- حالت قدیمی (سازگاری) -------------------
+    # ------------------- حالت قدیمی (لوریج ثابت) -------------------
     if leverage is not None:
         if leverage <= 0:
             return {"valid": False, "reason": "Leverage must be positive"}
@@ -99,6 +98,7 @@ def calculate_position_size(
         "valid": True,
         "risk_amount": risk_amount,
         "margin_allocation": margin_allocation,
+        "margin_required": margin_allocation,
         "required_leverage": required_leverage,
         "leverage": leverage,
         "notional_position_value": notional_position_value,
