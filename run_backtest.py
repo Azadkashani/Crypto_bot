@@ -24,6 +24,7 @@ from historical_data import (
     load_local_csv,
     save_csv,
     DataCoverageError,
+    timeframe_to_timedelta,   # ← این import اضافه شد
 )
 from historical_backtest import HistoricalBacktestRunner, HistoricalDataProvider
 
@@ -114,7 +115,9 @@ def main():
             print(f"   ⚠️ unable to fetch current volume: {e}")
 
         for tf in TIMEFRAMES:
-            warmup_delta = timedelta(seconds=WARMUP_BARS[tf] * timeframe_to_timedelta(tf).total_seconds())
+            warmup_delta = timedelta(
+                seconds=WARMUP_BARS[tf] * timeframe_to_timedelta(tf).total_seconds()
+            )
             data_start = BACKTEST_START - warmup_delta
 
             df = None
