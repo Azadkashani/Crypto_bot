@@ -48,7 +48,7 @@ def test_risk_remains_1pct_account():
 def test_portfolio_max_positions():
     pm = PortfolioManager(max_positions=4)
     assert pm.available_slots() == 4
-    pm.add_position("BTC/USDT:USDT", {"symbol":"BTC/USDT:USDT"})
+    pm.add_position("BTC/USDT:USDT", {"symbol": "BTC/USDT:USDT"})
     assert pm.available_slots() == 3
     assert pm.is_symbol_open("BTC/USDT:USDT")
     pm.remove_position("BTC/USDT:USDT")
@@ -57,15 +57,15 @@ def test_portfolio_max_positions():
 
 def test_portfolio_same_symbol_rejected():
     pm = PortfolioManager(max_positions=4)
-    pm.add_position("BTC/USDT:USDT", {"symbol":"BTC/USDT:USDT"})
+    pm.add_position("BTC/USDT:USDT", {"symbol": "BTC/USDT:USDT"})
     with pytest.raises(RuntimeError):
-        pm.add_position("BTC/USDT:USDT", {"symbol":"BTC/USDT:USDT"})
+        pm.add_position("BTC/USDT:USDT", {"symbol": "BTC/USDT:USDT"})
 
 
 def test_portfolio_filter_best_per_symbol():
     cands = [
-        {"symbol":"BTC/USDT:USDT","score":80},
-        {"symbol":"BTC/USDT:USDT","score":90},
+        {"symbol": "BTC/USDT:USDT", "score": 80},
+        {"symbol": "BTC/USDT:USDT", "score": 90},
     ]
     pm = PortfolioManager(max_positions=4)
     best = pm.filter_best_per_symbol(cands)
@@ -75,10 +75,44 @@ def test_portfolio_filter_best_per_symbol():
 
 def test_select_top_candidates_respects_capacity():
     pm = PortfolioManager(max_positions=4)
-    pm.add_position("BTC/USDT:USDT", {"symbol":"BTC/USDT:USDT"})
+    pm.add_position("BTC/USDT:USDT", {"symbol": "BTC/USDT:USDT"})
     cands = [
-        {"symbol":"ETH/USDT:USDT","score":80,"valid":True,"signal":"LONG","entry_price":100,"stop_loss":90,"take_profit":120,"risk_reward":2.0,"volume_24h_usdt":2000000,"regime_4h":"BULLISH","regime_1h":"BULLISH","rsi_recovery":True,"choch":True,"bos":True,"risk_amount":10,"position_size":1},
-        {"symbol":"SOL/USDT:USDT","score":70,"valid":True,"signal":"LONG","entry_price":100,"stop_loss":90,"take_profit":120,"risk_reward":2.0,"volume_24h_usdt":2000000,"regime_4h":"BULLISH","regime_1h":"BULLISH","rsi_recovery":True,"choch":True,"bos":True,"risk_amount":10,"position_size":1},
+        {
+            "symbol": "ETH/USDT:USDT",
+            "score": 80,
+            "valid": True,
+            "signal": "LONG",
+            "entry_price": 100,
+            "stop_loss": 90,
+            "take_profit": 120,
+            "risk_reward": 2.0,
+            "volume_24h_usdt": 2000000,
+            "regime_4h": "BULLISH",
+            "regime_1h": "BULLISH",
+            "rsi_recovery": True,
+            "choch": True,
+            "bos": True,
+            "risk_amount": 10,
+            "position_size": 1,
+        },
+        {
+            "symbol": "SOL/USDT:USDT",
+            "score": 70,
+            "valid": True,
+            "signal": "LONG",
+            "entry_price": 100,
+            "stop_loss": 90,
+            "take_profit": 120,
+            "risk_reward": 2.0,
+            "volume_24h_usdt": 2000000,
+            "regime_4h": "BULLISH",
+            "regime_1h": "BULLISH",
+            "rsi_recovery": True,
+            "choch": True,
+            "bos": True,
+            "risk_amount": 10,
+            "position_size": 1,
+        },
     ]
     selected = pm.select_top_candidates(cands)
-    assert len(selected) == 3
+    assert len(selected) == 2   # فقط ۲ کاندید موجود است؛ نه ۳
