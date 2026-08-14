@@ -96,8 +96,6 @@ class OptimizedBacktestRunner:
 
             df = df.sort_index()
             index_arr = df.index.values.astype("datetime64[ns]")
-
-            # تعریف enriched برای هر دو شاخه
             enriched = df.copy()
 
             if tf == config.TIMEFRAME_5M:
@@ -511,7 +509,7 @@ class OptimizedBacktestRunner:
         self.trades.append({
             "symbol": position["symbol"],
             "direction": direction,
-            "entry_time": position["entry_time"],
+            "entry_time": position.get("entry_time", exit_time),
             "entry_price": entry,
             "stop_loss": position["stop_loss"],
             "take_profit": position["take_profit"],
@@ -565,15 +563,28 @@ class OptimizedBacktestRunner:
             period_metrics[k] = _m(period_metrics[k])
 
         return {
+            # کلیدهای سطح بالا برای سازگاری با BacktestEngine قدیمی
             "success": True,
             "period": {"start": None, "end": None},
+            "initial_balance": self.initial_balance,
+            "final_balance": metrics["final_balance"],
+            "net_profit": metrics["net_profit"],
+            "total_trades": metrics["total_trades"],
+            "winning_trades": metrics["winning_trades"],
+            "losing_trades": metrics["losing_trades"],
+            "win_rate": metrics["win_rate"],
+            "profit_factor": metrics["profit_factor"],
+            "max_drawdown": metrics["max_drawdown"],
+            "average_r": metrics["average_r"],
+            "expectancy": metrics["expectancy"],
+            "largest_win": metrics["largest_win"],
+            "largest_loss": metrics["largest_loss"],
             "symbols_scanned": len(self.symbols),
             "eligible_symbols": len(self.symbols),
             "data_quality": {},
             "total_candidates": self.candidates_count,
             "selected_signals": self.selected_count,
             "safety_rejections": self.safety_rejections,
-            "total_trades": metrics["total_trades"],
             "metrics": metrics,
             "long_metrics": _m(long_trades),
             "short_metrics": _m(short_trades),
