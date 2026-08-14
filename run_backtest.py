@@ -7,7 +7,7 @@
     - برای هر Symbol و Timeframe داده تاریخی را دانلود یا از CSV محلی می‌خواند.
     - اعتبارسنجی کامل داده انجام می‌دهد.
     - فقط در صورت کامل بودن همه داده‌ها، بک‌تست را اجرا می‌کند.
-    - در غیر این صورت با پیام واضح متوقف می‌شود.
+    - از نسخه بهینه‌شده موتور بک‌تست استفاده می‌کند.
 
 هیچ سفارش واقعی ارسال نمی‌شود.
 """
@@ -26,7 +26,8 @@ from historical_data import (
     DataCoverageError,
     timeframe_to_timedelta,
 )
-from historical_backtest import HistoricalBacktestRunner, HistoricalDataProvider
+from backtest_engine import OptimizedBacktestRunner
+from historical_backtest import HistoricalDataProvider
 
 # ---------------------------------------------------------------
 # تنظیمات بک‌تست
@@ -184,11 +185,13 @@ def main():
         return
 
     print("\n" + "=" * 70)
-    print("اجرای بک‌تست...")
+    print("اجرای بک‌تست بهینه‌شده...")
     print("=" * 70)
 
     provider = DictHistoricalDataProvider(data_store, volume_cache)
-    runner = HistoricalBacktestRunner(
+
+    # استفاده از کلاس بهینه‌شده
+    runner = OptimizedBacktestRunner(
         provider,
         SYMBOLS,
         initial_balance=INITIAL_BALANCE,
