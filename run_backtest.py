@@ -1,214 +1,188 @@
 #!/usr/bin/env python3
 """
-اجرای Backtest واقعی روی داده‌های تاریخی Gate.io Futures.
+اجرای Real Market Historical Backtest روی چند نماد اصلی Gate.io Futures.
 
 این اسکریپت:
-    - لیست Symbol های واجد شرایط را از Market Scanner می‌گیرد
-    - داده‌های 4h ،1h و 5m را دریافت یا از CSV می‌خواند
-    - بک‌تست چندنمادی را با استفاده از HistoricalBacktestRunner اجرا می‌کند
-    - گزارش عملکرد را چاپ می‌کند
+    - بازارهای واجد شرایط را بررسی می‌کند.
+    - داده 5m/1h/4h واقعی را با Pagination دانلود می‌کند.
+    - داده‌ها را validation کرده و در data/ ذخیره می‌کند.
+    - بک‌تست چندنمادی را با HistoricalBacktestRunner اجرا می‌کند.
+    - گزارش Per-Symbol و Combined را چاپ می‌کند.
 
-توجه:
-    - این اسکریپت هیچ سفارش واقعی ارسال نمی‌کند.
-    - برای حجم ۲۴ ساعته تاریخی، اگر داده‌ی دقیق موجود نباشد، از حجم فعلی
-      استفاده می‌شود که ممکن است Bias ایجاد کند؛ برای بک‌تست دقیق باید
-      منبع حجم تاریخی فراهم شود.
+هیچ سفارش واقعی ارسال نمی‌شود.
 """
 
 import os
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from gate_exchange import GateExchange
+from historical_data import HistoricalDataDownloader, validate_ohlcv, expected_candles
 from historical_backtest import HistoricalBacktestRunner, HistoricalDataProvider
 import config
 
 
-# ----------------------------------------------------------------------
-# تنظیمات بک‌تست
-# ----------------------------------------------------------------------
-BACKTEST_START = "2025-01-01T00:00:00+00:00"
-BACKTEST_END = "2025-02-01T00:00:00+00:00"
+# ---------- تنظیمات بک‌تست ----------
+BACKTEST_START = os.getenv("BACKTEST_START", "2025-01-01T00:00:00+00:00")
+BACKTEST_END = os.getenv("BACKTEST_END", "2026-01-01T00:00:00+00:00")
 
-INITIAL_BALANCE = 1000.0
-FEE_RATE = 0.0005          # کارمزد معامله (اختیاری)
-SLIPPAGE_RATE = 0.0002     # لغزش قیمت (اختیاری)
+DATA_DIR = "data"
 
-# لیست Symbol ها (اگر None باشد از صرافی بازارهای واجد شرایط گرفته می‌شود)
 SYMBOLS = [
     "BTC/USDT:USDT",
     "ETH/USDT:USDT",
+    "BNB/USDT:USDT",
+    "XRP/USDT:USDT",
+    "SOL/USDT:USDT",
 ]
 
+TIMEFRAMES = ["5m", "1h", "4h"]
 
-class GateRealDataProvider(HistoricalDataProvider):
-    """
-    دریافت داده‌های OHLCV از GateExchange (فاز ۱۴).
-    برای حجم ۲۴ ساعته از Ticker فعلی استفاده می‌کند.
-    """
+INITIAL_BALANCE = 1000.0
+FEE_RATE = 0.0005
+SLIPPAGE_RATE = 0.0002
 
-    def __init__(self, exchange: GateExchange):
+
+class CsvHistoricalDataProvider(HistoricalDataProvider):
+    """تأمین‌کننده داده تاریخی از فایل‌های CSV ذخیره‌شده."""
+
+    def __init__(self, exchange, symbols, data_dir):
         self.exchange = exchange
+        self.data = {}
+        self.volume_cache = {}
+        for sym in symbols:
+            self.data[sym] = {}
+            for tf in TIMEFRAMES:
+                safe = sym.replace('/', '_').replace(':', '_')
+                path = os.path.join(data_dir, f"{safe}_{tf}.csv")
+                if not os.path.exists(path):
+                    raise FileNotFoundError(f"Missing CSV for {sym} {tf}")
+                df = pd.read_csv(path, index_col=0, parse_dates=True)
+                df.index = pd.to_datetime(df.index, utc=True)
+                self.data[sym][tf] = df
+            # حجم فعلی به‌عنوان proxy (محدودیت تاریخی)
+            try:
+                ticker = exchange.get_ticker(sym)
+                self.volume_cache[sym] = float(ticker.get('quote_volume', 0))
+            except Exception:
+                self.volume_cache[sym] = None
 
     def get_ohlcv(self, symbol, timeframe, start=None, end=None):
-        """دریافت OHLCV بسته‌شده از صرافی."""
-        df = self.exchange.get_ohlcv(
-            symbol,
-            timeframe,
-            limit=1000,
-            closed_only=False,   # خودمان بعداً برش می‌زنیم
-        )
-        if df.empty:
-            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-
+        df = self.data.get(symbol, {}).get(timeframe)
+        if df is None:
+            return pd.DataFrame(columns=['open', 'high', 'low', 'close', 'volume'])
         if start is not None:
-            df = df.loc[df.index >= pd.Timestamp(start)]
+            df = df[df.index >= pd.Timestamp(start)]
         if end is not None:
-            df = df.loc[df.index <= pd.Timestamp(end)]
-        return df
+            df = df[df.index <= pd.Timestamp(end)]
+        return df.copy()
 
     def get_volume_24h_usdt(self, symbol, timestamp):
-        """
-        حجم ۲۴ ساعته فعلی. برای بک‌تست تاریخی دقیق نیست.
-        اگر می‌خواهید Selection Bias نداشته باشید، باید از منبع
-        تاریخی جداگانه استفاده کنید.
-        """
-        ticker = self.exchange.get_ticker(symbol)
-        return ticker.get("quote_volume")
-
-
-class CsvDataProvider(HistoricalDataProvider):
-    """
-    خواندن داده از فایل‌های CSV موجود در پوشه data/.
-    حجم ۲۴ ساعته را از روی فایل volume یا به‌صورت ثابت برمی‌گرداند.
-    """
-
-    def __init__(self, symbols, volume_override=None):
-        self.symbols = symbols
-        self.volume_override = volume_override
-
-    def get_ohlcv(self, symbol, timeframe, start=None, end=None):
-        path = os.path.join(config.DATA_DIR, f"{symbol.replace('/', '_')}_{timeframe}.csv")
-        if not os.path.exists(path):
-            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-
-        df = pd.read_csv(path, index_col=0, parse_dates=True)
-        df.index = pd.to_datetime(df.index, utc=True)
-
-        if start is not None:
-            df = df.loc[df.index >= pd.Timestamp(start)]
-        if end is not None:
-            df = df.loc[df.index <= pd.Timestamp(end)]
-        return df
-
-    def get_volume_24h_usdt(self, symbol, timestamp):
-        if self.volume_override is not None:
-            return self.volume_override
-        # اگر فایل حجم جداگانه وجود دارد، اینجا بخوانید
-        # فعلاً به‌صورت پیش‌فرض ۵ میلیون برمی‌گردانیم (فقط برای تست)
-        return 5_000_000.0
-
-
-def _select_symbols(exchange: GateExchange):
-    """انتخاب Symbolهای واجد شرایط از صرافی."""
-    eligible = exchange.get_eligible_markets()
-    if not eligible:
-        # اگر هیچ نماد واجد شرایطی نبود، از config.SYMBOL استفاده کن
-        return [config.SYMBOL]
-    return [market["symbol"] for market in eligible]
+        return self.volume_cache.get(symbol)
 
 
 def main():
-    print("=" * 60)
+    print("=" * 70)
     print("REAL MARKET BACKTEST")
-    print("=" * 60)
+    print("=" * 70)
 
-    # اتصال به صرافی (فقط خواندنی)
+    start_ts = pd.Timestamp(BACKTEST_START)
+    end_ts = pd.Timestamp(BACKTEST_END)
+    duration = end_ts - start_ts
+    print(f"Backtest Period: {start_ts} → {end_ts}")
+    print(f"Duration: {duration}")
+    print(f"Initial Balance: {INITIAL_BALANCE}")
+    print(f"Symbols: {', '.join(SYMBOLS)}")
+    print()
+
     exchange = GateExchange()
     print("بارگذاری بازارها...")
     exchange.load_markets()
 
-    # انتخاب Symbolها
-    if SYMBOLS:
-        symbols = SYMBOLS
-    else:
-        symbols = _select_symbols(exchange)
-        print(f"نمادهای واجد شرایط: {symbols}")
+    eligible_symbols = []
+    data_report = {}
 
-    if not symbols:
-        print("هیچ نمادی برای بک‌تست وجود ندارد.")
+    for sym in SYMBOLS:
+        # بررسی واجد شرایط بودن بازار
+        eligibility = exchange.is_market_eligible(sym)
+        if not eligibility.get("eligible"):
+            print(f"❌ {sym}: REJECTED - {eligibility.get('reason')}")
+            continue
+
+        eligible_symbols.append(sym)
+        print(f"✅ {sym}: eligible (volume={eligibility.get('volume_24h_usdt', 0):,.0f} USDT)")
+
+        for tf in TIMEFRAMES:
+            downloader = HistoricalDataDownloader(exchange, sym, tf, start_ts, end_ts)
+            df = downloader.download()
+            validation = validate_ohlcv(df, tf, start_ts, end_ts)
+            data_report[f"{sym}:{tf}"] = validation
+
+            if not validation['valid']:
+                print(f"   ⚠️ {tf}: INVALID - {validation['issues']}")
+                continue
+
+            downloader.save(df, DATA_DIR)
+            expected = expected_candles(start_ts, end_ts, tf)
+            print(f"   📦 {tf}: {len(df)} candles (expected ~{expected}) saved")
+
+    if not eligible_symbols:
+        print("\nهیچ نماد واجد شرایطی برای بک‌تست وجود ندارد.")
         return
 
-    # انتخاب Provider
-    use_csv = os.getenv("USE_CSV_DATA", "false").lower() == "true"
-    if use_csv:
-        provider = CsvDataProvider(symbols)
-        print("حالت: خواندن از CSV")
-    else:
-        provider = GateRealDataProvider(exchange)
-        print("حالت: دریافت زنده از Gate.io (OHLCV)")
+    print("\n" + "=" * 70)
+    print("اجرای بک‌تست...")
+    print("=" * 70)
 
-    # ساخت Runner
+    provider = CsvHistoricalDataProvider(exchange, eligible_symbols, DATA_DIR)
     runner = HistoricalBacktestRunner(
         provider,
-        symbols,
+        eligible_symbols,
         initial_balance=INITIAL_BALANCE,
         fee_rate=FEE_RATE,
         slippage_rate=SLIPPAGE_RATE,
     )
 
-    start_ts = pd.Timestamp(BACKTEST_START)
-    end_ts = pd.Timestamp(BACKTEST_END)
-
-    print(f"بازه: {start_ts} تا {end_ts}")
-    print(f"سرمایه اولیه: {INITIAL_BALANCE}")
-    print("در حال اجرای بک‌تست...")
-
     result = runner.run(start_date=start_ts, end_date=end_ts)
 
-    # چاپ گزارش
-    print("\n" + "=" * 60)
-    print("نتایج بک‌تست")
-    print("=" * 60)
+    # ---------- گزارش نهایی ----------
+    print("\n" + "=" * 70)
+    print("COMBINED RESULTS")
+    print("=" * 70)
 
     metrics = result.get("metrics", {})
-    print(f"تعداد کل معاملات: {result.get('total_trades', 0)}")
-    print(f"تعداد سیگنال‌های انتخاب‌شده: {result.get('selected_signals', 0)}")
-    print(f"تعداد Candidate ها: {result.get('total_candidates', 0)}")
-    print(f"تعداد Safety Rejections: {result.get('safety_rejections', 0)}")
-    print(f"سود خالص: {metrics.get('net_profit', 0.0):.2f} USDT")
-    print(f"سرمایه نهایی: {metrics.get('final_balance', INITIAL_BALANCE):.2f} USDT")
-    print(f"نرخ برد: {metrics.get('win_rate', 0.0)*100:.2f}%")
+    print(f"Symbols Tested: {', '.join(eligible_symbols)}")
+    print(f"Total Trades: {result.get('total_trades', 0)}")
+    print(f"Selected Signals: {result.get('selected_signals', 0)}")
+    print(f"Candidates: {result.get('total_candidates', 0)}")
+    print(f"Safety Rejections: {result.get('safety_rejections', 0)}")
+    print(f"Win Rate: {metrics.get('win_rate', 0.0)*100:.2f}%")
     print(f"Profit Factor: {metrics.get('profit_factor', float('inf')):.2f}")
     print(f"Expectancy: {metrics.get('expectancy', 0.0):.4f} R")
     print(f"Average R: {metrics.get('average_r', 0.0):.4f}")
+    print(f"Net Profit: {metrics.get('net_profit', 0.0):.2f} USDT")
+    print(f"Final Balance: {metrics.get('final_balance', INITIAL_BALANCE):.2f} USDT")
     print(f"Max Drawdown: {metrics.get('max_drawdown', 0.0)*100:.2f}%")
     print(f"Largest Win: {metrics.get('largest_win', 0.0):.2f}")
     print(f"Largest Loss: {metrics.get('largest_loss', 0.0):.2f}")
+    print(f"Max Consecutive Wins: {metrics.get('max_consecutive_wins', 0)}")
+    print(f"Max Consecutive Losses: {metrics.get('max_consecutive_losses', 0)}")
+    print(f"Recovery Factor: {metrics.get('recovery_factor', 0.0):.2f}")
 
     # تفکیک LONG/SHORT
-    long_metrics = result.get("long_metrics", {})
-    short_metrics = result.get("short_metrics", {})
+    long_m = result.get("long_metrics", {})
+    short_m = result.get("short_metrics", {})
     print("\n--- LONG ---")
-    print(f"تعداد معاملات: {long_metrics.get('trades', 0)}")
-    print(f"نرخ برد: {long_metrics.get('win_rate', 0.0)*100:.2f}%")
-    print(f"سود خالص: {long_metrics.get('net_profit', 0.0):.2f}")
-
+    print(f"Trades: {long_m.get('trades', 0)} | Win Rate: {long_m.get('win_rate', 0)*100:.2f}% | Net Profit: {long_m.get('net_profit', 0):.2f}")
     print("\n--- SHORT ---")
-    print(f"تعداد معاملات: {short_metrics.get('trades', 0)}")
-    print(f"نرخ برد: {short_metrics.get('win_rate', 0.0)*100:.2f}%")
-    print(f"سود خالص: {short_metrics.get('net_profit', 0.0):.2f}")
+    print(f"Trades: {short_m.get('trades', 0)} | Win Rate: {short_m.get('win_rate', 0)*100:.2f}% | Net Profit: {short_m.get('net_profit', 0):.2f}")
 
-    # جزئیات معاملات
-    trades = result.get("trades", [])
-    if trades:
-        print("\n--- ۱۰ معامله اخیر ---")
-        for t in trades[-10:]:
-            print(
-                f"{t['symbol']} {t['direction']} "
-                f"Entry={t['entry_price']:.2f} Exit={t['exit_price']:.2f} "
-                f"Reason={t['exit_reason']} PnL={t['pnl']:.2f}"
-            )
+    # گزارش هر Symbol
+    symbol_metrics = result.get("symbol_metrics", {})
+    print("\n--- Per Symbol ---")
+    for sym in eligible_symbols:
+        sm = symbol_metrics.get(sym, {})
+        print(f"{sym}: Trades={sm.get('trades', 0)}, WinRate={sm.get('win_rate', 0)*100:.1f}%, NetProfit={sm.get('net_profit', 0):.2f}, AvgR={sm.get('average_r', 0):.3f}")
 
     print("\nبک‌تست کامل شد.")
 
