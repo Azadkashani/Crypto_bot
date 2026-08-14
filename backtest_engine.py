@@ -1,7 +1,7 @@
 """
 Backtest Engine با دو کلاس:
+- OptimizedBacktestRunner (نسخه بهینه‌شده با پیش‌محاسبه)
 - BacktestEngine (رابط قدیمی برای سازگاری با تست‌های فاز ۱۰ و ۱۲)
-- OptimizedBacktestRunner (نسخه بهینه‌شده با پیش‌محاسبه اندیکاتورها)
 
 هیچ تغییر منطقی در استراتژی، Risk، Scoring یا SL/TP ایجاد نشده است.
 """
@@ -49,23 +49,11 @@ class SimpleDataProvider:
         return self.volumes.get(symbol)
 
 
-class BacktestEngine(OptimizedBacktestRunner):
-    """
-    نسخه سازگار با interface قدیمی (data_5m, data_1h, data_4h, initial_balance).
-    """
-    def __init__(self, data_5m, data_1h, data_4h, initial_balance=1000.0):
-        provider = SimpleDataProvider(data_5m, data_1h, data_4h)
-        super().__init__(
-            provider,
-            provider.symbols,
-            initial_balance=initial_balance,
-        )
-
-
 class OptimizedBacktestRunner:
     """
     نسخهٔ بهینه‌شده با پیش‌محاسبه‌ی کامل اندیکاتورها.
     """
+
     def __init__(
         self,
         provider,
@@ -591,3 +579,16 @@ class OptimizedBacktestRunner:
             "period_metrics": period_metrics,
             "trades": self.trades,
         }
+
+
+class BacktestEngine(OptimizedBacktestRunner):
+    """
+    نسخه سازگار با interface قدیمی (data_5m, data_1h, data_4h, initial_balance).
+    """
+    def __init__(self, data_5m, data_1h, data_4h, initial_balance=1000.0):
+        provider = SimpleDataProvider(data_5m, data_1h, data_4h)
+        super().__init__(
+            provider,
+            provider.symbols,
+            initial_balance=initial_balance,
+        )
