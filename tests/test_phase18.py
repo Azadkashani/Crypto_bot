@@ -98,7 +98,6 @@ def test_validate_negative_volume():
 
 
 def test_validate_incomplete_last_candle(monkeypatch):
-    # زمان ثابت برای شبیه‌سازی کندل ناقص
     fixed_now = pd.Timestamp('2025-01-01 00:03:00', tz='UTC')
     original_now = pd.Timestamp.now
     monkeypatch.setattr(pd.Timestamp, 'now', staticmethod(lambda tz=None: fixed_now))
@@ -156,11 +155,14 @@ def test_data_not_empty():
 
 
 def test_timeframe_independence():
-    df5 = _make_ohlcv(10, freq='5min')
-    df1h = _make_ohlcv(10, freq='1h')
-    df4h = _make_ohlcv(10, freq='4h')
-    assert len(df5) != len(df1h)
-    assert len(df1h) != len(df4h)
+    df5 = _make_ohlcv(12, freq='5min')
+    df1h = _make_ohlcv(12, freq='1h')
+    df4h = _make_ohlcv(12, freq='4h')
+
+    # فاصله زمانی هر تایم‌فریم باید متفاوت باشد
+    assert df5.index[-1] - df5.index[0] == timedelta(minutes=55)
+    assert df1h.index[-1] - df1h.index[0] == timedelta(hours=11)
+    assert df4h.index[-1] - df4h.index[0] == timedelta(hours=44)
 
 
 def test_volume_filter_boundaries():
