@@ -7,9 +7,6 @@ from position_sizing import calculate_position_size
 import strategy
 
 
-# -------------------------------------------------------------------
-# توابع helper برای تست‌ها
-# -------------------------------------------------------------------
 def _make_position_sizing_result(account_balance, risk_per_trade, entry, sl, allocation, max_leverage):
     """محاسبه Position Sizing مستقیم با فرمول جدید."""
     return calculate_position_size(
@@ -32,14 +29,9 @@ def test_position_size_long():
     result = _make_position_sizing_result(1000, 0.01, 100, 95, 0.25, 20)
     assert result["valid"] is True
     assert result["stop_distance"] == 5
-    assert result["position_size"] == pytest.approx(0.5)  # notional=250, size=2.5? Wait entry=100, stop=95, notional=250 => size=2.5 actually?
-    # Recalculate: risk=10, stop_distance=5 => size=2 (old style) if leverage fixed.
-    # But dynamic: stop_pct=0.05, margin=250, leverage = 10/(250*0.05)=0.8? Actually 10/12.5=0.8, notional=200, size=2.0.
-    # Wait dynamic with allocation 0.25 and stop=5%, required leverage=10/(250*0.05)=0.8, notional=200, size=2.0.
-    # Our prior test_phase9 expected old size=2.0. It matches.
+    # با فرمول داینامیک: notional=200 و position_size=2.0
     assert result["position_size"] == pytest.approx(2.0)
     assert result["position_value"] == pytest.approx(200.0)
-    # margin_allocation=250, leverage=0.8 => notional=200
     assert result["margin_allocation"] == 250
     assert result["leverage"] == pytest.approx(0.8)
 
@@ -49,6 +41,7 @@ def test_position_size_short():
     assert result["valid"] is True
     assert result["stop_distance"] == 5
     assert result["position_size"] == pytest.approx(2.0)
+    assert result["leverage"] == pytest.approx(0.8)
 
 
 def test_position_value():
@@ -70,10 +63,6 @@ def test_leverage_does_not_change_risk_amount():
     assert result_5x["valid"] is True
     assert result_20x["valid"] is True
     assert result_5x["risk_amount"] == result_20x["risk_amount"] == 10.0
-    # با توجه به stop distance، لوریج متفاوت است اما ریسک ثابت
-    assert result_5x["leverage"] == pytest.approx(0.8)  # same? Actually max_leverage only cap, not used if required < cap.
-    # For stop=5%, required=0.8, both same. So margin_required same? margin=250, notional=200.
-    # Fine.
     assert result_5x["margin_required"] == result_20x["margin_required"] == 250.0
 
 
@@ -121,7 +110,6 @@ def test_strategy_integration_long():
     assert "margin_required" in res
     assert "leverage" in res
 
-    # بررسی با فرمول جدید داینامیک
     entry = res["entry_price"]
     stop = res["stop_loss"]
     risk_amount = config.ACCOUNT_BALANCE * config.RISK_PER_TRADE
