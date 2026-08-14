@@ -236,7 +236,6 @@ class HistoricalBacktestRunner:
                 size = best.get("position_size")
                 risk = best.get("risk_amount")
 
-                # اعمال slippage
                 if best["signal"] == "LONG":
                     fill_price = entry * (1 + self.slippage_rate)
                 else:
@@ -261,8 +260,69 @@ class HistoricalBacktestRunner:
             self._close_at_end(self.open_positions[sym], end_date)
             del self.open_positions[sym]
 
-        metrics = self._compute_metrics()
-        return metrics
+        # ساخت equity curve
+        equity_times = []
+        balances = []
+        for trade in self.trades:
+            equity_times.append(trade["exit_time"])
+            balances.append(trade["balance_after"])
+        if equity_times:
+            self.equity_curve = [{"timestamp": t, "balance": b} for t, b in zip(equity_times, balances)]
+
+        metrics = calculate_metrics(
+            trades=self.trades,
+            equity_curve=self.equity_curve,
+            initial_balance=self.initial_balance,
+        )
+
+        long_trades = [t for t in self.trades if t["direction"] == "LONG"]
+        short_trades = [t for t in self.trades if t["direction"] == "SHORT"]
+
+        def _m(trades):
+            if not trades:
+                return {"trades": 0, "win_rate": 0.0, "net_profit": 0.0, "profit_factor": float("inf"), "average_r": 0.0}
+            m = calculate_metrics(trades, [], initial_balance=None)
+            return {"trades": m["total_trades"], "win_rate": m["win_rate"], "net_profit": m["net_profit"], "profit_factor": m["profit_factor"], "average_r": m["average_r"]}
+
+        symbol_metrics = {}
+        for sym in self.symbols:
+            symbol_metrics[sym] = _m([t for t in self.trades if t["symbol"] == sym])
+
+        regime_metrics = {}
+        for r in ["BULLISH", "BEARISH", "RANGE"]:
+            if r == "BULLISH":
+                rt = [t for t in self.trades if t["regime_4h"] == "BULLISH" and t["regime_1h"] == "BULLISH"]
+            elif r == "BEARISH":
+                rt = [t for t in self.trades if t["regime_4h"] == "BEARISH" and t["regime_1h"] == "BEARISH"]
+            else:
+                rt = [t for t in self.trades if not ((t["regime_4h"] == "BULLISH" and t["regime_1h"] == "BULLISH") or (t["regime_4h"] == "BEARISH" and t["regime_1h"] == "BEARISH"))]
+            regime_metrics[r] = _m(rt)
+
+        period_metrics = {}
+        for t in self.trades:
+            key = t["exit_time"].strftime("%Y-%m") if t["exit_time"] else "unknown"
+            period_metrics.setdefault(key, []).append(t)
+        for k in period_metrics:
+            period_metrics[k] = _m(period_metrics[k])
+
+        return {
+            "success": True,
+            "period": {"start": start_date, "end": end_date},
+            "symbols_scanned": len(self.symbols),
+            "eligible_symbols": len(self.symbols),
+            "data_quality": data_quality_report,
+            "total_candidates": self.candidates_count,
+            "selected_signals": self.selected_count,
+            "safety_rejections": self.safety_rejections,
+            "total_trades": metrics["total_trades"],
+            "metrics": metrics,
+            "long_metrics": _m(long_trades),
+            "short_metrics": _m(short_trades),
+            "symbol_metrics": symbol_metrics,
+            "regime_metrics": regime_metrics,
+            "period_metrics": period_metrics,
+            "trades": self.trades,
+        }
 
     def _try_exit(self, position, decision_time):
         symbol = position["symbol"]
@@ -356,58 +416,3 @@ class HistoricalBacktestRunner:
             "regime_4h": position.get("regime_4h"),
             "regime_1h": position.get("regime_1h"),
         })
-
-    def _compute_metrics(self):
-        metrics = calculate_metrics(
-            trades=self.trades,
-            equity_curve=self.equity_curve,
-            initial_balance=self.initial_balance,
-        )
-        long_trades = [t for t in self.trades if t["direction"] == "LONG"]
-        short_trades = [t for t in self.trades if t["direction"] == "SHORT"]
-
-        def _m(trades):
-            if not trades:
-                return {"trades":0,"win_rate":0.0,"net_profit":0.0,"profit_factor":float("inf"),"average_r":0.0}
-            m = calculate_metrics(trades, [], initial_balance=None)
-            return {"trades":m["total_trades"],"win_rate":m["win_rate"],"net_profit":m["net_profit"],"profit_factor":m["profit_factor"],"average_r":m["average_r"]}
-
-        symbol_metrics = {}
-        for sym in self.symbols:
-            symbol_metrics[sym] = _m([t for t in self.trades if t["symbol"]==sym])
-
-        regime_metrics = {}
-        for r in ["BULLISH","BEARISH","RANGE"]:
-            if r == "BULLISH":
-                rt = [t for t in self.trades if t["regime_4h"]=="BULLISH" and t["regime_1h"]=="BULLISH"]
-            elif r == "BEARISH":
-                rt = [t for t in self.trades if t["regime_4h"]=="BEARISH" and t["regime_1h"]=="BEARISH"]
-            else:
-                rt = [t for t in self.trades if not ((t["regime_4h"]=="BULLISH" and t["regime_1h"]=="BULLISH") or (t["regime_4h"]=="BEARISH" and t["regime_1h"]=="BEARISH"))]
-            regime_metrics[r] = _m(rt)
-
-        period_metrics = {}
-        for t in self.trades:
-            key = t["exit_time"].strftime("%Y-%m") if t["exit_time"] else "unknown"
-            period_metrics.setdefault(key, []).append(t)
-        for k in period_metrics:
-            period_metrics[k] = _m(period_metrics[k])
-
-        return {
-            "success": True,
-            "period": {"start": None, "end": None},
-            "symbols_scanned": len(self.symbols),
-            "eligible_symbols": len(self.symbols),
-            "data_quality": {},
-            "total_candidates": self.candidates_count,
-            "selected_signals": self.selected_count,
-            "safety_rejections": self.safety_rejections,
-            "total_trades": metrics["total_trades"],
-            "metrics": metrics,
-            "long_metrics": _m(long_trades),
-            "short_metrics": _m(short_trades),
-            "symbol_metrics": symbol_metrics,
-            "regime_metrics": regime_metrics,
-            "period_metrics": period_metrics,
-            "trades": self.trades,
-        }
