@@ -258,6 +258,7 @@ def generate_signal(
         "risk_reward": risk_result["risk_reward"],
         "risk_amount": position_result["risk_amount"],
         "margin_allocation": position_result["margin_allocation"],
+        "margin_required": position_result["margin_required"],
         "required_leverage": position_result["required_leverage"],
         "leverage": position_result["leverage"],
         "notional_position_value": position_result["notional_position_value"],
