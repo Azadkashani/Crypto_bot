@@ -1,5 +1,11 @@
 """
 ماژول دریافت و اعتبارسنجی داده‌های تاریخی Gate.io Futures.
+
+این ماژول:
+    - داده‌های 5m / 1h / 4h را با رعایت محدودیت‌های صرافی دانلود می‌کند.
+    - اعتبارسنجی کامل داده (ترتیب، تکراری نبودن، OHLCV معتبر) انجام می‌دهد.
+    - پوشش بازه تاریخی را بررسی می‌کند و در صورت ناقص بودن، خطا می‌دهد.
+    - داده‌های محلی را فقط در صورتی معتبر می‌داند که پوشش کافی داشته باشند.
 """
 
 from __future__ import annotations
@@ -81,11 +87,7 @@ def validate_ohlcv(df: pd.DataFrame, timeframe: str) -> Dict[str, Any]:
     delta = timeframe_to_timedelta(timeframe)
     now = pd.Timestamp.now(tz="UTC")
 
-    if df.index.tz is None:
-        # اگر ایندکس timezone نداشت، بدون تبدیل to UTC، فقط بررسی ناقص بودن را رد می‌کنیم
-        # تا از TypeError جلوگیری شود
-        pass
-    else:
+    if df.index.tz is not None:
         last_end = df.index[-1] + delta
         if last_end > now:
             issues.append("incomplete last candle")
@@ -174,3 +176,167 @@ def validate_coverage(
         "major_gaps": major_gaps,
         "reason": "OK" if len(major_gaps) == 0 else f"major gaps at {major_gaps[:5]}",
     }
+
+
+def build_dataframe(rows: list) -> pd.DataFrame:
+    """ساخت DataFrame از ردیف‌های خام ccxt."""
+    if not rows:
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+    df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+    df.set_index("timestamp", inplace=True)
+    df = df[~df.index.duplicated(keep="first")]
+    df = df.sort_index()
+    return df
+
+
+def fetch_ohlcv_paginated(
+    exchange,
+    symbol: str,
+    timeframe: str,
+    since_ms: int,
+    end_ms: Optional[int] = None,
+) -> pd.DataFrame:
+    """دریافت کامل OHLCV با استفاده از pagination."""
+    all_rows = []
+    current_since = since_ms
+    while True:
+        if end_ms is not None and current_since >= end_ms:
+            break
+        limit = 1000
+        raw = exchange.exchange.fetch_ohlcv(symbol, timeframe, since=current_since, limit=limit)
+        if not raw:
+            break
+        all_rows.extend(raw)
+        last_ts = raw[-1][0]
+        if last_ts <= current_since:
+            break
+        current_since = last_ts + 1
+        if len(raw) < limit:
+            break
+
+    if not all_rows:
+        return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+
+    return build_dataframe(all_rows)
+
+
+class HistoricalDataDownloader:
+    """دریافت‌کننده داده تاریخی برای یک Symbol و Timeframe خاص."""
+
+    def __init__(
+        self,
+        exchange,
+        symbol: str,
+        timeframe: str,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        max_points: int = 1000,
+    ):
+        self.exchange = exchange
+        self.symbol = symbol
+        self.timeframe = timeframe
+        self.start = start
+        self.end = end
+        self.max_points = max_points
+
+    def _delta_ms(self) -> int:
+        delta = timeframe_to_timedelta(self.timeframe)
+        return int(delta.total_seconds() * 1000)
+
+    def download(self) -> pd.DataFrame:
+        """دانلود کامل داده از start تا end با pagination."""
+        if self.start >= self.end:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+        start_ms = int(self.start.timestamp() * 1000)
+        end_ms = int(self.end.timestamp() * 1000)
+        delta_ms = self._delta_ms()
+
+        if delta_ms <= 0:
+            raise ValueError(f"Invalid timeframe: {self.timeframe}")
+
+        all_rows: List[list] = []
+        cursor = start_ms
+        while cursor <= end_ms:
+            remaining_points = max(1, int((end_ms - cursor) / delta_ms) + 1)
+            limit = min(self.max_points, remaining_points)
+
+            try:
+                raw = self.exchange.exchange.fetch_ohlcv(
+                    self.symbol,
+                    self.timeframe,
+                    since=cursor,
+                    limit=limit,
+                )
+            except ccxt.BadRequest as e:
+                raise DataCoverageError(
+                    f"Gate.io historical data unavailable for {self.symbol} "
+                    f"{self.timeframe} at {pd.Timestamp(cursor, unit='ms', tz='UTC')}: {e}"
+                )
+            except Exception as e:
+                raise DataCoverageError(
+                    f"Gate.io fetch failed for {self.symbol} {self.timeframe}: {e}"
+                )
+
+            if not raw:
+                break
+
+            all_rows.extend(raw)
+            last_ts = raw[-1][0]
+
+            if last_ts <= cursor:
+                break
+
+            cursor = last_ts + delta_ms
+
+        df = build_dataframe(all_rows)
+
+        if df.empty:
+            raise DataCoverageError(
+                f"No historical data returned for {self.symbol} {self.timeframe} "
+                f"from {self.start} to {self.end}"
+            )
+
+        # محدود کردن به بازه درخواستی
+        df = df.loc[(df.index >= self.start) & (df.index <= self.end)]
+
+        coverage = validate_coverage(df, self.timeframe, self.start, self.end)
+        if not coverage["coverage_ok"]:
+            raise DataCoverageError(
+                f"Historical data coverage insufficient for {self.symbol} {self.timeframe}: "
+                f"{coverage['reason']}. Requested {self.start} → {self.end}, "
+                f"actual {coverage['first']} → {coverage['last']}"
+            )
+
+        return df
+
+    def save(self, df: pd.DataFrame, data_dir: str) -> str:
+        """ذخیره DataFrame در فایل CSV."""
+        os.makedirs(data_dir, exist_ok=True)
+        safe = self.symbol.replace("/", "_").replace(":", "_")
+        path = os.path.join(data_dir, f"{safe}_{self.timeframe}.csv")
+        df.to_csv(path)
+        return path
+
+
+def load_local_csv(symbol: str, timeframe: str, data_dir: str) -> Optional[pd.DataFrame]:
+    """خواندن فایل CSV محلی در صورت وجود."""
+    safe = symbol.replace("/", "_").replace(":", "_")
+    path = os.path.join(data_dir, f"{safe}_{timeframe}.csv")
+    if not os.path.exists(path):
+        return None
+
+    df = pd.read_csv(path, index_col=0, parse_dates=True)
+    df.index = pd.to_datetime(df.index, utc=True)
+    return df
+
+
+def save_csv(df: pd.DataFrame, symbol: str, timeframe: str, data_dir: str) -> str:
+    """ذخیره DataFrame در CSV."""
+    os.makedirs(data_dir, exist_ok=True)
+    safe = symbol.replace("/", "_").replace(":", "_")
+    path = os.path.join(data_dir, f"{safe}_{timeframe}.csv")
+    df.to_csv(path)
+    return path
