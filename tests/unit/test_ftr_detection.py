@@ -29,7 +29,7 @@ def create_ohlcv_data(prices: List[float], highs: List[float], lows: List[float]
             'high': highs[i],
             'low': lows[i],
             'close': prices[i],
-            'volume': volumes[i] if volumes else 0,
+            'volume': volumes[i] if volumes else 100,
             'timestamp': i * 3600  # هر کندل یک ساعت
         }
         data.append(candle)
@@ -45,7 +45,6 @@ def create_bullish_ftr_scenario() -> List[dict]:
     ۳. ادامه صعود
     ۴. بازگشت به Zone (FTB)
     """
-    # ۵۰ کندل داده
     n = 60
     prices = []
     highs = []
@@ -54,65 +53,58 @@ def create_bullish_ftr_scenario() -> List[dict]:
     
     base_price = 100.0
     
-    # فاز ۱: حرکت صعودی (شکست)
-    for i in range(10):
+    # فاز ۱: حرکت صعودی اولیه
+    for i in range(15):
         price = base_price + i * 1.0
         opens.append(price - 0.5)
         prices.append(price)
         highs.append(price + 0.8)
         lows.append(price - 0.5)
     
-    # سطح مقاومت در 110
-    # فاز ۲: شکست مقاومت
-    for i in range(10):
-        price = 110 + i * 0.8
-        opens.append(price - 0.4)
-        prices.append(price)
-        highs.append(price + 0.6)
-        lows.append(price - 0.3)
+    # سطح مقاومت حدود 115
     
-    # فاز ۳: Impulse
-    impulse_start = 118
-    for i in range(6):
-        price = impulse_start + i * 2.0
-        opens.append(price - 1.5)
+    # فاز ۲: شکست مقاومت با قدرت
+    for i in range(8):
+        price = 115 + i * 1.5
+        opens.append(price - 1.0)
+        prices.append(price)
+        highs.append(price + 0.7)
+        lows.append(price - 0.5)
+    
+    # فاز ۳: Impulse قوی
+    impulse_start = 127
+    for i in range(7):
+        price = impulse_start + i * 2.5
+        opens.append(price - 2.0)
         prices.append(price)
         highs.append(price + 0.5)
         lows.append(price - 0.8)
     
     # فاز ۴: Base (تثبیت)
-    base_high = 132
-    base_low = 129
-    for i in range(8):
-        price = base_low + (i % 3) * 1.0
+    base_high = 145
+    base_low = 140
+    for i in range(10):
+        price = base_low + (i % 4) * 1.2
         opens.append(price)
         prices.append(price)
         highs.append(base_high)
         lows.append(base_low)
     
-    # فاز ۵: ادامه صعود
+    # فاز ۵: ادامه صعود (Continuation)
     for i in range(8):
-        price = base_high + 1 + i * 1.5
-        opens.append(price - 1.0)
+        price = base_high + 2 + i * 2.0
+        opens.append(price - 1.5)
         prices.append(price)
-        highs.append(price + 0.8)
+        highs.append(price + 1.0)
         lows.append(price - 0.5)
     
     # فاز ۶: بازگشت به Zone (FTB)
-    for i in range(8):
+    for i in range(12):
         price = base_high - i * 0.3
         opens.append(price + 0.2)
         prices.append(price)
-        highs.append(price + 0.4)
-        lows.append(price - 0.3)
-    
-    # پر کردن بقیه
-    for i in range(10):
-        price = base_low - 0.5 - i * 0.1
-        opens.append(price + 0.1)
-        prices.append(price)
-        highs.append(price + 0.2)
-        lows.append(price - 0.2)
+        highs.append(price + 0.5)
+        lows.append(price - 0.4)
     
     return create_ohlcv_data(prices[:n], highs[:n], lows[:n], opens[:n])
 
@@ -129,36 +121,36 @@ def create_bearish_ftr_scenario() -> List[dict]:
     
     base_price = 200.0
     
-    # فاز ۱: حرکت نزولی
-    for i in range(10):
+    # فاز ۱: حرکت نزولی اولیه
+    for i in range(15):
         price = base_price - i * 1.0
         opens.append(price + 0.5)
         prices.append(price)
-        highs.append(price + 0.8)
-        lows.append(price - 0.5)
+        highs.append(price + 0.5)
+        lows.append(price - 0.8)
     
     # فاز ۲: شکست حمایت
-    for i in range(10):
-        price = 190 - i * 0.8
-        opens.append(price + 0.4)
+    for i in range(8):
+        price = 185 - i * 1.5
+        opens.append(price + 1.0)
         prices.append(price)
-        highs.append(price + 0.3)
-        lows.append(price - 0.6)
+        highs.append(price + 0.5)
+        lows.append(price - 0.7)
     
     # فاز ۳: Impulse نزولی
-    impulse_start = 182
-    for i in range(6):
-        price = impulse_start - i * 2.0
-        opens.append(price + 1.5)
+    impulse_start = 173
+    for i in range(7):
+        price = impulse_start - i * 2.5
+        opens.append(price + 2.0)
         prices.append(price)
         highs.append(price + 0.8)
         lows.append(price - 0.5)
     
     # فاز ۴: Base
-    base_high = 168
-    base_low = 165
-    for i in range(8):
-        price = base_high - (i % 3) * 1.0
+    base_high = 155
+    base_low = 150
+    for i in range(10):
+        price = base_high - (i % 4) * 1.2
         opens.append(price)
         prices.append(price)
         highs.append(base_high)
@@ -166,27 +158,19 @@ def create_bearish_ftr_scenario() -> List[dict]:
     
     # فاز ۵: ادامه نزول
     for i in range(8):
-        price = base_low - 1 - i * 1.5
-        opens.append(price + 1.0)
+        price = base_low - 2 - i * 2.0
+        opens.append(price + 1.5)
         prices.append(price)
         highs.append(price + 0.5)
-        lows.append(price - 0.8)
+        lows.append(price - 1.0)
     
     # فاز ۶: بازگشت به Zone
-    for i in range(8):
+    for i in range(12):
         price = base_low + i * 0.3
         opens.append(price - 0.2)
         prices.append(price)
-        highs.append(price + 0.3)
-        lows.append(price - 0.4)
-    
-    # پر کردن بقیه
-    for i in range(10):
-        price = base_high + 0.5 + i * 0.1
-        opens.append(price - 0.1)
-        prices.append(price)
-        highs.append(price + 0.2)
-        lows.append(price - 0.2)
+        highs.append(price + 0.4)
+        lows.append(price - 0.5)
     
     return create_ohlcv_data(prices[:n], highs[:n], lows[:n], opens[:n])
 
@@ -280,9 +264,6 @@ class TestFTRDetection:
             if result.zones:
                 zones.extend(result.zones)
         
-        # در سناریوی نزولی، Zone باید تشخیص داده شود
-        # (توجه: ممکن است با پارامترهای فعلی Zone شناسایی نشود)
-        # این تست فقط بررسی می‌کند که کد اجرا می‌شود و خطا نمی‌دهد
         assert isinstance(zones, list)
     
     def test_zone_lifecycle(self):
@@ -302,7 +283,6 @@ class TestFTRDetection:
     
     def test_invalid_structure_no_zone(self):
         """تست عدم تشخیص Zone در ساختار نامعتبر"""
-        # داده تصادفی بدون ساختار مشخص
         n = 30
         prices = [100 + (i % 5) * 0.1 for i in range(n)]
         highs = [p + 0.5 for p in prices]
@@ -319,5 +299,4 @@ class TestFTRDetection:
             if result.zones:
                 zones.extend(result.zones)
         
-        # در داده تصادفی نباید Zone معتبر ایجاد شود
         assert len(zones) == 0, "در داده تصادفی نباید FTR Zone ایجاد شود"
