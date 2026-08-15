@@ -27,6 +27,7 @@ from gate_exchange import GateExchange
 from historical_data import validate_ohlcv
 import strategy
 import signal_scoring
+from position_sizing import calculate_position_size
 
 
 logging.basicConfig(
@@ -50,6 +51,27 @@ class LivePaperTradingRunner:
         self.current_balance = float(config.ACCOUNT_BALANCE)
 
     # ------------------------------------------------------------------
+    # همگام‌سازی زمانی
+    # ------------------------------------------------------------------
+    def _get_latest_decision_time(self) -> pd.Timestamp:
+        """
+        یافتن آخرین زمان بسته‌شدن کندل 5m از داده واقعی.
+        اگر داده‌ای موجود نبود، از زمان فعلی استفاده می‌شود.
+        """
+        for sym in self.symbols:
+            try:
+                df = self.exchange.get_ohlcv(
+                    sym, config.TIMEFRAME_5M, limit=2, closed_only=False
+                )
+                if not df.empty:
+                    last_start = df.index[-1]
+                    # زمان بسته‌شدن آخرین کندل
+                    return last_start + pd.Timedelta(minutes=5)
+            except Exception:
+                continue
+        return pd.Timestamp.now(tz='UTC')
+
+    # ------------------------------------------------------------------
     # اجرای زنده
     # ------------------------------------------------------------------
     def run_once(self, current_time: Optional[pd.Timestamp] = None) -> None:
@@ -58,29 +80,27 @@ class LivePaperTradingRunner:
             logger.critical("PAPER_TRADING=False detected! Exiting to avoid real orders.")
             return
 
-        if current_time is None:
-            current_time = pd.Timestamp.now(tz='UTC')
-
+        # همگام‌سازی زمانی: استفاده از آخرین کندل بسته‌شده 5m
+        decision_time = self._get_latest_decision_time()
         logger.info("=" * 70)
-        logger.info("PAPER TRADING MODE - REAL ORDERS DISABLED")
+        logger.info(f"PAPER TRADING MODE - REAL ORDERS DISABLED | Decision Time: {decision_time}")
         logger.info("=" * 70)
 
         # 1) Monitor existing paper positions
-        self._monitor_open_positions(current_time)
+        self._monitor_open_positions(decision_time)
 
         # 2) جمع‌آوری کاندیداها
         candidates: List[Dict[str, Any]] = []
 
         for sym in self.symbols:
-            # تکراری نشدن سیگنال در یک کندل
+            # جلوگیری از سیگنال تکراری در همان decision_time
             if sym in self.last_signal_timestamps:
                 last_ts = self.last_signal_timestamps[sym]
-                # برای سادگی فقط مانع در همان ثانیه
-                if last_ts == current_time:
+                if last_ts == decision_time:
                     continue
 
             try:
-                signal = self._generate_signal_for_symbol(sym, current_time)
+                signal = self._generate_signal_for_symbol(sym, decision_time)
             except Exception as e:
                 logger.warning(f"خطا در تحلیل {sym}: {e}")
                 continue
@@ -88,29 +108,64 @@ class LivePaperTradingRunner:
             if signal is None:
                 continue
 
-            # اضافه کردن حجم ۲۴ ساعته
+            # دریافت قیمت لحظه‌ای و اعتبارسنجی فاصله قیمت
             try:
                 ticker = self.exchange.get_ticker(sym)
+                live_price = float(ticker.get('last', 0))
                 volume_24h = float(ticker.get('quote_volume', 0))
-            except Exception:
-                volume_24h = 0.0
+            except Exception as e:
+                logger.warning(f"دریافت Ticker برای {sym} ناموفق: {e}")
+                continue
+
+            if live_price <= 0:
+                logger.warning(f"Live price invalid for {sym}")
+                continue
 
             if volume_24h < 1_000_000:
                 logger.info(f"{sym} حجم ۲۴ ساعته کمتر از ۱٬۰۰۰٬۰۰۰ - نادیده گرفته می‌شود")
                 continue
 
-            candidate = {**signal, "symbol": sym, "volume_24h_usdt": volume_24h}
+            # بررسی انحراف قیمت
+            entry_price = signal.get("entry_price")
+            if entry_price is None:
+                continue
+
+            deviation = abs(live_price - entry_price) / entry_price
+            if deviation > config.MAX_ENTRY_PRICE_DEVIATION:
+                logger.warning(
+                    f"{sym} قیمت لحظه‌ای {live_price:.2f} با Entry سیگنال {entry_price:.2f} "
+                    f"اختلاف {deviation:.4f} دارد - سیگنال رد شد"
+                )
+                continue
+
+            # شرط‌های LONG/SHORT با قیمت لحظه‌ای
+            take_profit = signal.get("take_profit")
+            if signal["signal"] == "LONG":
+                if live_price > take_profit or live_price > entry_price * (1 + config.MAX_ENTRY_PRICE_DEVIATION):
+                    logger.warning(f"{sym} LONG با قیمت لحظه‌ای {live_price:.2f} معتبر نیست - سیگنال رد شد")
+                    continue
+            else:  # SHORT
+                if live_price < take_profit or live_price < entry_price * (1 - config.MAX_ENTRY_PRICE_DEVIATION):
+                    logger.warning(f"{sym} SHORT با قیمت لحظه‌ای {live_price:.2f} معتبر نیست - سیگنال رد شد")
+                    continue
+
+            # اضافه کردن قیمت لحظه‌ای به سیگنال
+            signal["live_price"] = live_price
+            signal["volume_24h_usdt"] = volume_24h
+
+            candidate = {**signal, "symbol": sym}
 
             score = signal_scoring.calculate_score(candidate)
             if score is None:
                 continue
             candidate["score"] = score
             candidates.append(candidate)
-            self.last_signal_timestamps[sym] = current_time
+            self.last_signal_timestamps[sym] = decision_time
 
             logger.info(
                 f"[SCAN] {sym} Direction={candidate.get('signal')} Score={score:.2f} "
-                f"Entry={candidate.get('entry_price'):.2f} SL={candidate.get('stop_loss'):.2f}"
+                f"Entry={candidate.get('entry_price'):.2f} Live={live_price:.2f} "
+                f"SL={candidate.get('stop_loss'):.2f} TP={candidate.get('take_profit'):.2f}"
             )
 
         if not candidates:
@@ -136,19 +191,19 @@ class LivePaperTradingRunner:
         selected = ranked[:slots]
 
         for best in selected:
-            self._open_paper_position(best, current_time)
+            self._open_paper_position(best, decision_time)
 
-    def _generate_signal_for_symbol(self, symbol: str, current_time: pd.Timestamp) -> Optional[Dict[str, Any]]:
+    def _generate_signal_for_symbol(self, symbol: str, decision_time: pd.Timestamp) -> Optional[Dict[str, Any]]:
         """دریافت داده و تولید سیگنال با Strategy فعلی."""
         try:
             df_4h = self.exchange.get_ohlcv(
-                symbol, config.TIMEFRAME_4H, limit=500, closed_only=True, current_time=current_time
+                symbol, config.TIMEFRAME_4H, limit=500, closed_only=True, current_time=decision_time
             )
             df_1h = self.exchange.get_ohlcv(
-                symbol, config.TIMEFRAME_1H, limit=500, closed_only=True, current_time=current_time
+                symbol, config.TIMEFRAME_1H, limit=500, closed_only=True, current_time=decision_time
             )
             df_5m = self.exchange.get_ohlcv(
-                symbol, config.TIMEFRAME_5M, limit=500, closed_only=True, current_time=current_time
+                symbol, config.TIMEFRAME_5M, limit=500, closed_only=True, current_time=decision_time
             )
         except Exception as e:
             logger.warning(f"دریافت داده ناموفق برای {symbol}: {e}")
@@ -161,7 +216,7 @@ class LivePaperTradingRunner:
             df_4h,
             df_1h,
             df_5m,
-            as_of=current_time,
+            as_of=decision_time,
             account_balance=self.current_balance,
             symbol=symbol,
         )
@@ -177,8 +232,8 @@ class LivePaperTradingRunner:
     def _filter_open_symbols(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return [c for c in candidates if c["symbol"] not in self.open_positions]
 
-    def _open_paper_position(self, signal: Dict[str, Any], current_time: pd.Timestamp) -> None:
-        """ایجاد Paper Position از یک سیگنال معتبر."""
+    def _open_paper_position(self, signal: Dict[str, Any], decision_time: pd.Timestamp) -> None:
+        """ایجاد Paper Position از یک سیگنال معتبر با قیمت ورود لحظه‌ای."""
         symbol = signal["symbol"]
         if symbol in self.open_positions:
             logger.warning(f"سیگنال تکراری برای {symbol} نادیده گرفته می‌شود")
@@ -188,16 +243,48 @@ class LivePaperTradingRunner:
             logger.warning("حداکثر تعداد پوزیشن‌های همزمان رسیده است")
             return
 
+        # دریافت قیمت لحظه‌ای
+        try:
+            ticker = self.exchange.get_ticker(symbol)
+            live_price = float(ticker.get('last', 0))
+        except Exception as e:
+            logger.warning(f"خطا در دریافت Live Price برای {symbol}: {e}")
+            return
+
+        if live_price <= 0:
+            logger.warning(f"Live Price نامعتبر برای {symbol}")
+            return
+
+        # بررسی دوباره انحراف
+        entry_signal = signal.get("entry_price")
+        deviation = abs(live_price - entry_signal) / entry_signal
+        if deviation > config.MAX_ENTRY_PRICE_DEVIATION:
+            logger.warning(f"اختلاف قیمت ورود برای {symbol} از حد مجاز عبور کرد - سیگنال رد شد")
+            return
+
+        # محاسبه Position Sizing با قیمت لحظه‌ای
+        pos = calculate_position_size(
+            account_balance=self.current_balance,
+            risk_per_trade=config.RISK_PER_TRADE,
+            entry_price=live_price,
+            stop_loss=signal["stop_loss"],
+            allocation=config.POSITION_ALLOCATION,
+            max_leverage=config.MAX_LEVERAGE,
+        )
+        if not pos["valid"]:
+            logger.warning(f"Position Sizing برای {symbol} نامعتبر: {pos.get('reason')}")
+            return
+
         position = {
             "symbol": symbol,
             "direction": signal["signal"],
-            "entry_time": current_time,
-            "entry_price": float(signal["entry_price"]),
+            "entry_time": decision_time,
+            "entry_price": live_price,               # ورود با قیمت لحظه‌ای
             "stop_loss": float(signal["stop_loss"]),
             "take_profit": float(signal["take_profit"]),
-            "position_size": float(signal["position_size"]),
-            "risk_amount": float(signal["risk_amount"]),
-            "leverage": float(signal.get("leverage", 0.0)),
+            "position_size": float(pos["position_size"]),
+            "risk_amount": float(pos["risk_amount"]),
+            "leverage": float(pos["leverage"]),
             "score": signal.get("score"),
             "r_multiple": 0.0,
             "exit_time": None,
@@ -212,16 +299,16 @@ class LivePaperTradingRunner:
             f"[PAPER SIGNAL] {symbol} {position['direction']} Score={position['score']:.2f} "
             f"Entry={position['entry_price']:.2f} SL={position['stop_loss']:.2f} "
             f"TP={position['take_profit']:.2f} Risk={position['risk_amount']:.2f} "
-            f"Lev={position['leverage']:.2f}"
+            f"Lev={position['leverage']:.2f} Live={live_price:.2f}"
         )
 
-    def _monitor_open_positions(self, current_time: pd.Timestamp) -> None:
+    def _monitor_open_positions(self, decision_time: pd.Timestamp) -> None:
         """بررسی SL/TP برای پوزیشن‌های باز."""
         for sym in list(self.open_positions.keys()):
             position = self.open_positions[sym]
             try:
                 df_5m = self.exchange.get_ohlcv(
-                    sym, config.TIMEFRAME_5M, limit=5, closed_only=True, current_time=current_time
+                    sym, config.TIMEFRAME_5M, limit=5, closed_only=True, current_time=decision_time
                 )
                 if df_5m.empty:
                     continue
@@ -257,7 +344,7 @@ class LivePaperTradingRunner:
                 else:
                     continue
 
-            self._close_paper_position(sym, exit_price, exit_reason, current_time)
+            self._close_paper_position(sym, exit_price, exit_reason, decision_time)
 
     def _close_paper_position(self, symbol: str, exit_price: float, exit_reason: str, exit_time: pd.Timestamp) -> None:
         """بستن Paper Position و ثبت معامله."""
