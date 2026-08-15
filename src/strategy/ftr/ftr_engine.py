@@ -122,7 +122,6 @@ class FTREngine:
         for structure_break in recent_breaks:
             break_key = self._make_break_key(structure_break)
             
-            # اگر قبلاً پردازش شده، رد شود
             if break_key in self._processed_breaks:
                 continue
             
@@ -142,7 +141,6 @@ class FTREngine:
             
             level = structure_break.broken_level
             
-            # اگر سطح مصرف شده، رد شود
             if level.is_consumed:
                 self._processed_breaks.add(break_key)
                 del self._pending_breaks[break_key]
@@ -160,14 +158,12 @@ class FTREngine:
             )
             
             if not displacement or not displacement.is_valid:
-                # Impulse هنوز کامل نشده — Pending باقی می‌ماند
                 continue
             
             # ۵. تشخیص Base (فقط با داده قابل مشاهده)
             base = self.base_detector.detect_base(visible_ohlcv, displacement)
             
             if not base or not base.is_valid:
-                # Base هنوز کامل نشده — Pending باقی می‌ماند
                 continue
             
             # ۶. ساخت FTR Zone
@@ -183,7 +179,6 @@ class FTREngine:
             )
             
             if zone and self.zone_constructor.validate_zone(zone):
-                # ۷. موفقیت — مصرف سطح و علامت‌گذاری Break
                 level.is_consumed = True
                 self._processed_breaks.add(break_key)
                 del self._pending_breaks[break_key]
@@ -196,7 +191,7 @@ class FTREngine:
                 result.add_zone(zone)
                 result.add_diagnostic(f"FTR zone created: {zone.zone_id}")
         
-        # ۸. بررسی FTB و Invalidation برای Zoneهای فعال
+        # ۷. بررسی FTB و Invalidation برای Zoneهای فعال
         for zone_id, zone in list(self._active_zones.items()):
             if self._check_invalidation(visible_ohlcv, current_index, zone):
                 zone.invalidate(current_timestamp)
@@ -222,23 +217,18 @@ class FTREngine:
         return result
     
     def get_active_zones(self) -> List[FTRZone]:
-        """دریافت Zoneهای فعال"""
         return list(self._active_zones.values())
     
     def get_all_zones(self) -> List[FTRZone]:
-        """دریافت تمام Zoneها"""
         return self._all_zones.copy()
     
     def get_ftb_events(self) -> List[FTBEvent]:
-        """دریافت رویدادهای FTB"""
         return self._ftb_events.copy()
     
     def get_pending_breaks(self) -> List[StructureBreak]:
-        """دریافت Breakهای در انتظار"""
         return list(self._pending_breaks.values())
     
     def _make_break_key(self, structure_break: StructureBreak) -> tuple:
-        """ساخت کلید یکتا برای جلوگیری از پردازش تکراری"""
         return (
             structure_break.broken_level.price,
             structure_break.direction,
@@ -246,7 +236,7 @@ class FTREngine:
         )
     
     def _find_break_index(self, ohlcv_data: List[dict], break_timestamp: int) -> Optional[int]:
-        """یافتن ایندکس کندل شکست از timestamp"""
+        """یافتن ایندکس کندل شکست در داده قابل مشاهده"""
         for i, candle in enumerate(ohlcv_data):
             if candle['timestamp'] == break_timestamp:
                 return i
@@ -254,7 +244,6 @@ class FTREngine:
     
     def _check_invalidation(self, ohlcv_data: List[dict], current_index: int,
                            zone: FTRZone) -> bool:
-        """بررسی ابطال Zone"""
         current_candle = ohlcv_data[current_index]
         
         if zone.direction == "LONG":
