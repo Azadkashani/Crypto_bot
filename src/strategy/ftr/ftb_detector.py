@@ -74,10 +74,11 @@ class FTBDetector:
         if zone.state != FTRZoneState.ACTIVE:
             return None
         
-        # بررسی زمان انتظار
-        if current_index - zone.base.end_index > self.config.max_ftb_wait_candles:
-            zone.update_state(FTRZoneState.EXPIRED)
-            return None
+        # بررسی زمان انتظار (فقط اگر base وجود داشته باشد)
+        if zone.base is not None:
+            if current_index - zone.base.end_index > self.config.max_ftb_wait_candles:
+                zone.expire(ohlcv_data[current_index]['timestamp'])
+                return None
         
         current_candle = ohlcv_data[current_index]
         current_high = current_candle['high']
