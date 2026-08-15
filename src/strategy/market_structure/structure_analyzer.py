@@ -48,6 +48,7 @@ class StructureAnalyzer:
         self._recent_breaks: List[StructureBreak] = []
         self._structure_type: StructureType = StructureType.RANGING
         self._last_break: Optional[StructureBreak] = None
+        self._registered_break_keys: set = set()
     
     def reset(self):
         """بازنشانی وضعیت تحلیلگر"""
@@ -57,6 +58,7 @@ class StructureAnalyzer:
         self._recent_breaks.clear()
         self._structure_type = StructureType.RANGING
         self._last_break = None
+        self._registered_break_keys.clear()
     
     def process_bar(self, ohlcv_data: List[dict], current_index: int) -> MarketStructureState:
         """پردازش کندل جاری و به‌روزرسانی ساختار بازار"""
@@ -221,7 +223,13 @@ class StructureAnalyzer:
             current_close = ohlcv_data[check_index]['close']
             
             for level in self._structure_levels:
+                # فقط سطوحی که قبلاً Break برایشان ثبت نشده بررسی شوند
                 if level.is_consumed:
+                    continue
+                
+                break_key = self._make_level_break_key(level)
+                
+                if break_key in self._registered_break_keys:
                     continue
                 
                 if level.level_type in ["RESISTANCE", "SUPPLY"]:
@@ -234,7 +242,10 @@ class StructureAnalyzer:
                                     level, "LONG", current_close,
                                     ohlcv_data[check_index]['timestamp']
                                 )
-                                level.is_consumed = False  # سطح فعلاً مصرف نمی‌شود
+                                self._registered_break_keys.add(break_key)
+                                # سطح شکسته شده — دیگر برای Break بررسی نشود
+                                # اما is_consumed فقط توسط FTREngine پس از ساخت Zone تغییر می‌کند
+                                level.last_touched_timestamp = ohlcv_data[check_index]['timestamp']
                 
                 elif level.level_type in ["SUPPORT", "DEMAND"]:
                     if current_close < level.price:
@@ -246,7 +257,12 @@ class StructureAnalyzer:
                                     level, "SHORT", current_close,
                                     ohlcv_data[check_index]['timestamp']
                                 )
-                                level.is_consumed = False
+                                self._registered_break_keys.add(break_key)
+                                level.last_touched_timestamp = ohlcv_data[check_index]['timestamp']
+    
+    def _make_level_break_key(self, level: StructureLevel) -> tuple:
+        """ساخت کلید یکتا برای سطح جهت جلوگیری از ثبت تکراری Break"""
+        return (level.price, level.level_type)
     
     def _validate_break(self, ohlcv_data: List[dict], break_index: int, 
                         level: StructureLevel, direction: str) -> bool:
