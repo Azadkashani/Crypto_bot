@@ -30,7 +30,7 @@ def create_ohlcv_data(prices: List[float], highs: List[float], lows: List[float]
             'low': lows[i],
             'close': prices[i],
             'volume': volumes[i] if volumes else 100,
-            'timestamp': i * 3600  # هر کندل یک ساعت
+            'timestamp': i * 3600
         }
         data.append(candle)
     
@@ -39,138 +39,214 @@ def create_ohlcv_data(prices: List[float], highs: List[float], lows: List[float]
 
 def create_bullish_ftr_scenario() -> List[dict]:
     """
-    ایجاد سناریوی FTR صعودی:
-    ۱. حرکت صعودی قوی (شکست)
-    ۲. Base کوتاه
-    ۳. ادامه صعود
-    ۴. بازگشت به Zone (FTB)
+    سناریوی FTR صعودی با سطوح ساختاری واضح
     """
-    n = 60
+    n = 70
     prices = []
     highs = []
     lows = []
     opens = []
     
-    base_price = 100.0
-    
-    # فاز ۱: حرکت صعودی اولیه
-    for i in range(15):
-        price = base_price + i * 1.0
-        opens.append(price - 0.5)
-        prices.append(price)
-        highs.append(price + 0.8)
-        lows.append(price - 0.5)
-    
-    # سطح مقاومت حدود 115
-    
-    # فاز ۲: شکست مقاومت با قدرت
-    for i in range(8):
-        price = 115 + i * 1.5
-        opens.append(price - 1.0)
-        prices.append(price)
-        highs.append(price + 0.7)
-        lows.append(price - 0.5)
-    
-    # فاز ۳: Impulse قوی
-    impulse_start = 127
-    for i in range(7):
-        price = impulse_start + i * 2.5
-        opens.append(price - 2.0)
+    # فاز ۱: روند صعودی با Swingهای واضح
+    # Swing Low در 100
+    for i in range(5):
+        price = 100 + i * 0.5
+        opens.append(price - 0.3)
         prices.append(price)
         highs.append(price + 0.5)
-        lows.append(price - 0.8)
+        lows.append(price - 0.3)
     
-    # فاز ۴: Base (تثبیت)
-    base_high = 145
-    base_low = 140
-    for i in range(10):
-        price = base_low + (i % 4) * 1.2
-        opens.append(price)
-        prices.append(price)
-        highs.append(base_high)
-        lows.append(base_low)
-    
-    # فاز ۵: ادامه صعود (Continuation)
-    for i in range(8):
-        price = base_high + 2 + i * 2.0
-        opens.append(price - 1.5)
-        prices.append(price)
-        highs.append(price + 1.0)
-        lows.append(price - 0.5)
-    
-    # فاز ۶: بازگشت به Zone (FTB)
-    for i in range(12):
-        price = base_high - i * 0.3
+    # Swing High در 105 (اولین)
+    for i in range(5):
+        price = 103 + i * 0.4
         opens.append(price + 0.2)
         prices.append(price)
         highs.append(price + 0.5)
         lows.append(price - 0.4)
     
+    # Swing Low در 102 (بالاتر از قبلی - Higher Low)
+    for i in range(5):
+        price = 104 - i * 0.4
+        opens.append(price - 0.2)
+        prices.append(price)
+        highs.append(price + 0.4)
+        lows.append(price - 0.3)
+    
+    # Swing High در 108 (بالاتر - Higher High)
+    for i in range(5):
+        price = 105 + i * 0.6
+        opens.append(price + 0.3)
+        prices.append(price)
+        highs.append(price + 0.5)
+        lows.append(price - 0.4)
+    
+    # Swing Low در 106 (باز هم Higher Low)
+    for i in range(5):
+        price = 108 - i * 0.4
+        opens.append(price - 0.2)
+        prices.append(price)
+        highs.append(price + 0.3)
+        lows.append(price - 0.3)
+    
+    # فاز ۲: شکست قوی مقاومت 108
+    # کندل شکست
+    price = 110
+    opens.append(108.5)
+    prices.append(price)
+    highs.append(110.5)
+    lows.append(108)
+    
+    # تأیید شکست
+    for i in range(3):
+        price = 111 + i * 1.0
+        opens.append(price - 0.8)
+        prices.append(price)
+        highs.append(price + 0.5)
+        lows.append(price - 0.5)
+    
+    # فاز ۳: Impulse قوی
+    for i in range(6):
+        price = 115 + i * 2.0
+        opens.append(price - 1.5)
+        prices.append(price)
+        highs.append(price + 0.5)
+        lows.append(price - 0.6)
+    
+    # فاز ۴: Base (تثبیت) - محدوده 126-130
+    base_high = 130
+    base_low = 126
+    for i in range(8):
+        price = base_low + (i % 3) * 1.3
+        opens.append(price)
+        prices.append(price)
+        highs.append(base_high)
+        lows.append(base_low)
+    
+    # فاز ۵: ادامه صعود
+    for i in range(6):
+        price = base_high + 2 + i * 1.5
+        opens.append(price - 1.0)
+        prices.append(price)
+        highs.append(price + 0.7)
+        lows.append(price - 0.5)
+    
+    # فاز ۶: بازگشت به Zone (FTB)
+    for i in range(12):
+        price = base_high - 0.5 - i * 0.3
+        opens.append(price + 0.2)
+        prices.append(price)
+        highs.append(price + 0.4)
+        lows.append(price - 0.3)
+    
+    # پر کردن
+    for i in range(4):
+        price = base_low - 1 - i * 0.2
+        opens.append(price + 0.1)
+        prices.append(price)
+        highs.append(price + 0.3)
+        lows.append(price - 0.3)
+    
     return create_ohlcv_data(prices[:n], highs[:n], lows[:n], opens[:n])
 
 
 def create_bearish_ftr_scenario() -> List[dict]:
-    """
-    ایجاد سناریوی FTR نزولی
-    """
-    n = 60
+    """سناریوی FTR نزولی"""
+    n = 70
     prices = []
     highs = []
     lows = []
     opens = []
     
-    base_price = 200.0
-    
-    # فاز ۱: حرکت نزولی اولیه
-    for i in range(15):
-        price = base_price - i * 1.0
-        opens.append(price + 0.5)
+    # فاز ۱: روند نزولی با Swingهای واضح
+    for i in range(5):
+        price = 200 - i * 0.5
+        opens.append(price + 0.3)
         prices.append(price)
-        highs.append(price + 0.5)
-        lows.append(price - 0.8)
-    
-    # فاز ۲: شکست حمایت
-    for i in range(8):
-        price = 185 - i * 1.5
-        opens.append(price + 1.0)
-        prices.append(price)
-        highs.append(price + 0.5)
-        lows.append(price - 0.7)
-    
-    # فاز ۳: Impulse نزولی
-    impulse_start = 173
-    for i in range(7):
-        price = impulse_start - i * 2.5
-        opens.append(price + 2.0)
-        prices.append(price)
-        highs.append(price + 0.8)
+        highs.append(price + 0.3)
         lows.append(price - 0.5)
     
-    # فاز ۴: Base
-    base_high = 155
-    base_low = 150
-    for i in range(10):
-        price = base_high - (i % 4) * 1.2
+    for i in range(5):
+        price = 197 - i * 0.4
+        opens.append(price - 0.2)
+        prices.append(price)
+        highs.append(price + 0.4)
+        lows.append(price - 0.5)
+    
+    for i in range(5):
+        price = 196 + i * 0.4
+        opens.append(price + 0.2)
+        prices.append(price)
+        highs.append(price + 0.3)
+        lows.append(price - 0.4)
+    
+    for i in range(5):
+        price = 195 - i * 0.6
+        opens.append(price - 0.3)
+        prices.append(price)
+        highs.append(price + 0.4)
+        lows.append(price - 0.5)
+    
+    for i in range(5):
+        price = 192 + i * 0.4
+        opens.append(price + 0.2)
+        prices.append(price)
+        highs.append(price + 0.3)
+        lows.append(price - 0.3)
+    
+    # فاز ۲: شکست حمایت 192
+    price = 190
+    opens.append(191.5)
+    prices.append(price)
+    highs.append(192)
+    lows.append(189.5)
+    
+    for i in range(3):
+        price = 189 - i * 1.0
+        opens.append(price + 0.8)
+        prices.append(price)
+        highs.append(price + 0.5)
+        lows.append(price - 0.5)
+    
+    # فاز ۳: Impulse نزولی
+    for i in range(6):
+        price = 185 - i * 2.0
+        opens.append(price + 1.5)
+        prices.append(price)
+        highs.append(price + 0.6)
+        lows.append(price - 0.5)
+    
+    # فاز ۴: Base - محدوده 172-176
+    base_high = 176
+    base_low = 172
+    for i in range(8):
+        price = base_high - (i % 3) * 1.3
         opens.append(price)
         prices.append(price)
         highs.append(base_high)
         lows.append(base_low)
     
     # فاز ۵: ادامه نزول
-    for i in range(8):
-        price = base_low - 2 - i * 2.0
-        opens.append(price + 1.5)
+    for i in range(6):
+        price = base_low - 2 - i * 1.5
+        opens.append(price + 1.0)
         prices.append(price)
         highs.append(price + 0.5)
-        lows.append(price - 1.0)
+        lows.append(price - 0.7)
     
     # فاز ۶: بازگشت به Zone
     for i in range(12):
-        price = base_low + i * 0.3
+        price = base_low + 0.5 + i * 0.3
         opens.append(price - 0.2)
         prices.append(price)
-        highs.append(price + 0.4)
-        lows.append(price - 0.5)
+        highs.append(price + 0.3)
+        lows.append(price - 0.4)
+    
+    for i in range(4):
+        price = base_high + 1 + i * 0.2
+        opens.append(price - 0.1)
+        prices.append(price)
+        highs.append(price + 0.3)
+        lows.append(price - 0.3)
     
     return create_ohlcv_data(prices[:n], highs[:n], lows[:n], opens[:n])
 
@@ -186,28 +262,28 @@ def get_default_config() -> FTREngineConfig:
             min_swing_distance_pct=0.0005
         ),
         structure_config=StructureAnalyzerConfig(
-            min_level_strength=2,
-            level_tolerance_pct=0.001,
+            min_level_strength=1,  # تغییر به ۱ تا سطح با یک Swing هم ایجاد شود
+            level_tolerance_pct=0.005,  # افزایش tolerance به 0.5%
             break_validation_candles=1,
             min_break_distance_pct=0.001
         ),
         breakout_config=BreakoutDetectorConfig(
             break_method="close",
             min_break_distance_pct=0.001,
-            min_break_strength=0.3,
+            min_break_strength=0.2,  # کاهش قدرت لازم
             confirmation_candles=1
         ),
         impulse_config=ImpulseDetectorConfig(
             min_impulse_candles=2,
             max_impulse_candles=10,
             min_impulse_distance_pct=0.002,
-            min_body_ratio=0.4
+            min_body_ratio=0.3  # کاهش نسبت بدنه
         ),
         base_config=BaseDetectorConfig(
             min_base_candles=2,
             max_base_candles=15,
-            max_retracement_pct=0.382,
-            max_base_range_pct=0.25
+            max_retracement_pct=0.5,  # افزایش تحمل بازگشت
+            max_base_range_pct=0.30
         ),
         zone_config=ZoneConstructorConfig(
             invalidation_buffer_pct=0.05,
