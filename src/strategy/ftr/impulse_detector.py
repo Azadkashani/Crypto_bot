@@ -85,10 +85,11 @@ class ImpulseDetector:
                     impulse_candles.append(i)
                 else:
                     # بررسی بازگشت
-                    retracement = (current_extreme - candle['close']) / max_distance if max_distance > 0 else 1.0
-                    
-                    if retracement > self.config.max_retracement_during_impulse:
-                        break
+                    if max_distance > 0:
+                        retracement = (current_extreme - candle['close']) / max_distance
+                        
+                        if retracement > self.config.max_retracement_during_impulse:
+                            break
                     elif self._is_reversal_candle(candle, direction):
                         break
             
@@ -101,10 +102,11 @@ class ImpulseDetector:
                     max_distance = start_price - end_price
                     impulse_candles.append(i)
                 else:
-                    retracement = (candle['close'] - current_extreme) / max_distance if max_distance > 0 else 1.0
-                    
-                    if retracement > self.config.max_retracement_during_impulse:
-                        break
+                    if max_distance > 0:
+                        retracement = (candle['close'] - current_extreme) / max_distance
+                        
+                        if retracement > self.config.max_retracement_during_impulse:
+                            break
                     elif self._is_reversal_candle(candle, direction):
                         break
         
