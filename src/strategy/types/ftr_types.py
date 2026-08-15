@@ -7,7 +7,12 @@
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from enum import Enum
-from .market_structure import StructureLevel, StructureBreak, SwingPoint
+from .market_structure import (
+    StructureLevel, 
+    StructureBreak, 
+    SwingPoint,
+    MarketStructureState
+)
 
 
 class FTRDirection(Enum):
@@ -170,6 +175,11 @@ class FTRZone:
         """مصرف Zone (استفاده شده)"""
         self.update_state(FTRZoneState.USED)
         self.diagnostic_info["consumed_timestamp"] = timestamp
+    
+    def expire(self, timestamp: int):
+        """منقضی کردن Zone"""
+        self.update_state(FTRZoneState.EXPIRED)
+        self.diagnostic_info["expired_timestamp"] = timestamp
 
 
 @dataclass
