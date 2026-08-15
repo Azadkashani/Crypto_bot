@@ -95,7 +95,6 @@ def select_threshold_from_train(train_rows: List[Dict[str, Any]], thresholds: Li
     """
     best_threshold = None
     best_expectancy = -999.0
-    best_pf = 0.0
 
     for th in thresholds:
         filtered = filter_by_sl_atr(train_rows, th)
@@ -103,21 +102,16 @@ def select_threshold_from_train(train_rows: List[Dict[str, Any]], thresholds: Li
             continue
         metrics = summarize_rows(filtered)
         exp = metrics["expectancy"]
-        pf = metrics["profit_factor"]
         if exp > best_expectancy + 0.03:
             best_threshold = th
             best_expectancy = exp
-            best_pf = pf
         elif abs(exp - best_expectancy) <= 0.03:
             # اگر تفاوت خیلی کم بود، آستانه‌ی کمتر را ترجیح بده
-            if th < best_threshold:
+            if best_threshold is None or th < best_threshold:
                 best_threshold = th
-                best_expectancy = exp
-                best_pf = pf
 
-    # اگر هیچ آستانه‌ای معتبر نبود
+    # اگر هیچ آستانه‌ای معتبر نبود، از بزرگ‌ترین آستانه با معامله کافی استفاده کن
     if best_threshold is None:
-        # آستانه‌ی بزرگ‌تر که معاملات کافی دارد
         for th in sorted(thresholds, reverse=True):
             filtered = filter_by_sl_atr(train_rows, th)
             if len(filtered) >= 5:
@@ -140,14 +134,13 @@ def run_walk_forward(
     if not rows:
         return {
             "windows": [],
-            "threshold_stats": [],
+            "threshold_stats": {},
             "summary": {
                 "number_of_windows": 0,
                 "candidate_thresholds": thresholds,
                 "baseline_total_pnl": 0.0,
                 "baseline_expectancy": 0.0,
                 "baseline_pf": float("inf"),
-                "thresholds": {},
             }
         }
 
@@ -155,23 +148,19 @@ def run_walk_forward(
     sorted_rows = sorted(rows, key=lambda r: pd.Timestamp(r.get("entry_time")))
 
     total = len(sorted_rows)
-    windows = []
-    threshold_performance: Dict[float, Dict[str, Any]] = {}
+    windows: List[Dict[str, Any]] = []
+    threshold_stats: Dict[float, Dict[str, Any]] = {}
 
-    # ساخت پنجره‌ها
-    train_start_idx = 0
-    window_id = 1
+    val_start_idx = initial_train_size
 
-    while train_start_idx + initial_train_size < total:
-        train_end_idx = train_start_idx + initial_train_size - 1
-        val_start_idx = train_end_idx + 1
+    while val_start_idx < total:
         val_end_idx = min(val_start_idx + validation_size - 1, total - 1)
 
         if val_start_idx >= total:
             break
 
-        train_rows = sorted_rows[train_start_idx: val_start_idx]
-        val_rows = sorted_rows[val_start_idx: val_end_idx + 1]
+        train_rows = sorted_rows[:val_start_idx]
+        val_rows = sorted_rows[val_start_idx:val_end_idx + 1]
 
         if not train_rows or not val_rows:
             break
@@ -202,7 +191,7 @@ def run_walk_forward(
         val_filtered = summarize_rows(val_filtered_rows)
 
         window = {
-            "window_id": window_id,
+            "window_id": len(windows) + 1,
             "train_start": train_dates[0],
             "train_end": train_dates[1],
             "validation_start": val_dates[0],
@@ -243,8 +232,9 @@ def run_walk_forward(
             filtered_val = filter_by_sl_atr(val_rows, th)
             train_metrics = summarize_rows(filtered_train)
             val_metrics = summarize_rows(filtered_val)
-            if th not in threshold_performance:
-                threshold_performance[th] = {
+
+            if th not in threshold_stats:
+                threshold_stats[th] = {
                     "times_selected": 0,
                     "positive_validation_windows": 0,
                     "total_validation_windows": 0,
@@ -253,23 +243,122 @@ def run_walk_forward(
                     "validation_pnls": [],
                     "validation_trade_counts": [],
                 }
+
             if selected_threshold == th:
-                threshold_performance[th]["times_selected"] += 1
-            threshold_performance[th]["total_validation_windows"] += 1
+                threshold_stats[th]["times_selected"] += 1
+            threshold_stats[th]["total_validation_windows"] += 1
             if val_metrics["expectancy"] > 0:
-                threshold_performance[th]["positive_validation_windows"] += 1
-            threshold_performance[th]["validation_expectancies"].append(val_metrics["expectancy"])
-            threshold_performance[th]["validation_pfs"].append(val_metrics["profit_factor"])
-            threshold_performance[th]["validation_pnls"].append(val_metrics["total_pnl"])
-            threshold_performance[th]["validation_trade_counts"].append(val_metrics["total_trades"])
+                threshold_stats[th]["positive_validation_windows"] += 1
+            threshold_stats[th]["validation_expectancies"].append(val_metrics["expectancy"])
+            threshold_stats[th]["validation_pfs"].append(val_metrics["profit_factor"])
+            threshold_stats[th]["validation_pnls"].append(val_metrics["total_pnl"])
+            threshold_stats[th]["validation_trade_counts"].append(val_metrics["total_trades"])
 
         # حرکت به پنجره بعدی: train شامل validation قبلی می‌شود
-        train_start_idx = val_end_idx + 1
-        # اما در expanding-window، train باید از ابتدا تا پایان val باشد؛
-        # در پیاده‌سازی فعلی train_start_idx شروع از ابتداست که اشتباه است.
-        # برای expanding، train همیشه از index 0 شروع می‌شود.
-        # پس باید train_start_idx ثابت بماند و val_start_idx جلو برود.
-        # اصلاح:
-        # در اینجا train_start_idx به عنوان شروع train ثابت 0 است.
-        # بنابراین باید از متغیر دیگری برای val_start استفاده کنیم.
-        # به همین دلیل این حلقه ناقص است. در ادامه یک نسخه اصلاح‌شده می‌آید.
+        val_start_idx = val_end_idx + 1
+
+    # ساخت CSV ها و گزارش
+    os.makedirs(output_dir, exist_ok=True)
+
+    windows_df = pd.DataFrame(windows)
+    windows_df.to_csv(os.path.join(output_dir, "sl_atr_walk_forward.csv"), index=False)
+
+    threshold_rows = []
+    for th in thresholds:
+        stats = threshold_stats.get(th, {})
+        expectancies = stats.get("validation_expectancies", [])
+        pfs = stats.get("validation_pfs", [])
+        pnls = stats.get("validation_pnls", [])
+        trades = stats.get("validation_trade_counts", [])
+        threshold_rows.append({
+            "threshold": th,
+            "times_selected": stats.get("times_selected", 0),
+            "selection_rate": stats.get("times_selected", 0) / len(windows) if windows else 0.0,
+            "validation_windows_tested": stats.get("total_validation_windows", 0),
+            "positive_validation_windows": stats.get("positive_validation_windows", 0),
+            "positive_validation_rate": stats.get("positive_validation_windows", 0) / stats.get("total_validation_windows", 0) if stats.get("total_validation_windows", 0) else 0.0,
+            "average_validation_expectancy": float(np.mean(expectancies)) if expectancies else 0.0,
+            "median_validation_expectancy": float(np.median(expectancies)) if expectancies else 0.0,
+            "average_validation_pf": float(np.mean(pfs)) if pfs else 0.0,
+            "median_validation_pf": float(np.median(pfs)) if pfs else 0.0,
+            "total_validation_pnl": float(sum(pnls)) if pnls else 0.0,
+            "average_validation_pnl": float(np.mean(pnls)) if pnls else 0.0,
+            "worst_validation_pnl": float(min(pnls)) if pnls else 0.0,
+            "best_validation_pnl": float(max(pnls)) if pnls else 0.0,
+            "average_trade_count": float(np.mean(trades)) if trades else 0.0,
+            "minimum_trade_count": int(min(trades)) if trades else 0,
+            "maximum_trade_count": int(max(trades)) if trades else 0,
+        })
+    threshold_df = pd.DataFrame(threshold_rows)
+    threshold_df.to_csv(os.path.join(output_dir, "sl_atr_walk_forward_thresholds.csv"), index=False)
+
+    # Baseline کلی
+    baseline_all = summarize_rows(sorted_rows)
+
+    # Summary JSON
+    summary = {
+        "number_of_windows": len(windows),
+        "candidate_thresholds": thresholds,
+        "baseline_total_pnl": baseline_all["total_pnl"],
+        "baseline_expectancy": baseline_all["expectancy"],
+        "baseline_pf": baseline_all["profit_factor"],
+        "thresholds": threshold_df.to_dict(orient="records"),
+    }
+    with open(os.path.join(output_dir, "sl_atr_walk_forward_summary.json"), "w") as f:
+        json.dump(summary, f, indent=2, default=str)
+
+    # گزارش متنی
+    report_lines = []
+    report_lines.append("=" * 70)
+    report_lines.append("SL/ATR WALK-FORWARD VALIDATION REPORT")
+    report_lines.append("=" * 70)
+    report_lines.append(f"Number of walk-forward windows: {len(windows)}")
+    report_lines.append(f"Baseline total PnL: {baseline_all['total_pnl']:.2f}")
+    report_lines.append(f"Baseline expectancy: {baseline_all['expectancy']:.4f} R")
+    report_lines.append(f"Baseline profit factor: {baseline_all['profit_factor']:.2f}")
+    report_lines.append("-" * 70)
+
+    for th in thresholds:
+        stats = next((x for x in threshold_df.to_dict(orient='records') if x["threshold"] == th), None)
+        if not stats:
+            continue
+        report_lines.append(f"\nThreshold SL/ATR <= {th}")
+        report_lines.append(f"  Times selected: {stats['times_selected']} / {len(windows)}")
+        report_lines.append(f"  Positive validation windows: {stats['positive_validation_windows']} / {stats['validation_windows_tested']}")
+        report_lines.append(f"  Average validation expectancy: {stats['average_validation_expectancy']:.4f} R")
+        report_lines.append(f"  Average validation PF: {stats['average_validation_pf']:.2f}")
+        report_lines.append(f"  Total validation PnL: {stats['total_validation_pnl']:.2f}")
+        report_lines.append(f"  Trade count min/avg/max: {stats['minimum_trade_count']}/{stats['average_trade_count']:.1f}/{stats['maximum_trade_count']}")
+
+    # Robustness verdict heuristic
+    report_lines.append("\n" + "-" * 70)
+    report_lines.append("ROBUSTNESS VERDICT")
+    report_lines.append("-" * 70)
+    for th in thresholds:
+        stats = next((x for x in threshold_df.to_dict(orient='records') if x["threshold"] == th), None)
+        if not stats:
+            continue
+        if stats["positive_validation_rate"] > 0.6 and stats["average_validation_expectancy"] > 0:
+            verdict = "STRONG ROBUST" if stats["average_validation_expectancy"] > 0.1 else "MODERATE ROBUST"
+        elif stats["positive_validation_rate"] > 0.4:
+            verdict = "WEAK"
+        else:
+            verdict = "UNSTABLE/REJECT"
+        report_lines.append(f"SL/ATR <= {th}: {verdict}")
+
+    report_lines.append("\n" + "=" * 70)
+    report_lines.append("LIMITATIONS")
+    report_lines.append("=" * 70)
+    report_lines.append("Dataset contains only {} trades. Results are robustness evidence, not statistical proof.".format(total))
+    report_lines.append("No live strategy modifications should be made based solely on this analysis.")
+
+    report_text = "\n".join(report_lines)
+    with open(os.path.join(output_dir, "sl_atr_walk_forward_report.txt"), "w") as f:
+        f.write(report_text)
+
+    return {
+        "windows": windows,
+        "threshold_stats": threshold_stats,
+        "summary": summary,
+        "baseline": baseline_all,
+    }
