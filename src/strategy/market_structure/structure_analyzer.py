@@ -16,10 +16,10 @@ from .swing_detector import SwingDetector, SwingDetectorConfig
 @dataclass
 class StructureAnalyzerConfig:
     """پیکربندی تحلیل ساختار"""
-    min_level_strength: int = 2  # حداقل تعداد Swing برای ایجاد سطح
-    level_tolerance_pct: float = 0.0005  # تلرانس برای ادغام سطوح (0.05%)
-    break_validation_candles: int = 1  # تعداد کندل برای تأیید شکست
-    min_break_distance_pct: float = 0.001  # حداقل فاصله شکست (0.1%)
+    min_level_strength: int = 2
+    level_tolerance_pct: float = 0.0005
+    break_validation_candles: int = 1
+    min_break_distance_pct: float = 0.001
     
     def validate(self) -> List[str]:
         errors = []
@@ -59,21 +59,15 @@ class StructureAnalyzer:
         self._last_break = None
     
     def process_bar(self, ohlcv_data: List[dict], current_index: int) -> MarketStructureState:
-        """
-        پردازش کندل جاری و به‌روزرسانی ساختار بازار
-        """
-        # تشخیص Swingهای جدید
+        """پردازش کندل جاری و به‌روزرسانی ساختار بازار"""
         new_swings = self.swing_detector.process_bar(ohlcv_data, current_index)
         self._all_swings.extend(new_swings)
         
-        # به‌روزرسانی ساختار
         if new_swings:
             self._update_structure(new_swings)
         
-        # بررسی شکست ساختار
         self._check_breaks(ohlcv_data, current_index)
         
-        # ساخت و بازگرداندن وضعیت
         return self._build_market_structure_state()
     
     def get_structure_levels(self) -> List[StructureLevel]:
@@ -81,7 +75,7 @@ class StructureAnalyzer:
         return self._structure_levels.copy()
     
     def get_recent_breaks(self) -> List[StructureBreak]:
-        """دریافت شکست‌های اخیر"""
+        """دریافت شکست‌های ثبت‌شده"""
         return self._recent_breaks.copy()
     
     def _build_market_structure_state(self) -> MarketStructureState:
@@ -104,7 +98,6 @@ class StructureAnalyzer:
         if len(self._all_swings) < 2:
             return
         
-        # بررسی روند
         last_swing_high = self._get_last_swing(SwingType.HIGH)
         last_swing_low = self._get_last_swing(SwingType.LOW)
         
@@ -120,7 +113,6 @@ class StructureAnalyzer:
                 else:
                     self._update_structure_type(StructureType.RANGING)
         
-        # به‌روزرسانی سطوح ساختاری
         self._update_structure_levels()
     
     def _update_structure_type(self, new_type: StructureType):
@@ -151,11 +143,9 @@ class StructureAnalyzer:
     
     def _update_structure_levels(self):
         """به‌روزرسانی سطوح ساختاری از Swingها"""
-        # Swing Highها به عنوان مقاومت
         swing_highs = [s for s in self._all_swings if s.swing_type == SwingType.HIGH]
         self._create_levels_from_swings(swing_highs, "RESISTANCE")
         
-        # Swing Lowها به عنوان حمایت
         swing_lows = [s for s in self._all_swings if s.swing_type == SwingType.LOW]
         self._create_levels_from_swings(swing_lows, "SUPPORT")
     
@@ -164,7 +154,6 @@ class StructureAnalyzer:
         if len(swings) < self.config.min_level_strength:
             return
         
-        # گروه‌بندی Swingهای نزدیک
         grouped = self._group_swings_by_price(swings)
         
         for price_level, swing_group in grouped.items():
@@ -226,7 +215,6 @@ class StructureAnalyzer:
             if level.is_consumed:
                 continue
             
-            # بررسی شکست مقاومت
             if level.level_type in ["RESISTANCE", "SUPPLY"]:
                 if current_close > level.price:
                     break_distance = (current_close - level.price) / level.price
@@ -235,7 +223,6 @@ class StructureAnalyzer:
                         if self._validate_break(ohlcv_data, current_index, level, "LONG"):
                             self._register_break(level, "LONG", current_close, ohlcv_data[current_index]['timestamp'])
             
-            # بررسی شکست حمایت
             elif level.level_type in ["SUPPORT", "DEMAND"]:
                 if current_close < level.price:
                     break_distance = (level.price - current_close) / level.price
@@ -266,7 +253,7 @@ class StructureAnalyzer:
     
     def _register_break(self, level: StructureLevel, direction: str, 
                        break_price: float, break_timestamp: int):
-        """ثبت شکست ساختاری"""
+        """ثبت شکست ساختاری — سطح مصرف نمی‌شود"""
         break_type = self._determine_break_type(direction)
         
         structure_break = StructureBreak(
@@ -282,8 +269,9 @@ class StructureAnalyzer:
         
         self._recent_breaks.append(structure_break)
         self._last_break = structure_break
-        level.is_consumed = True
         level.last_touched_timestamp = break_timestamp
+        # NOTE: is_consumed = True حذف شد
+        # سطح فقط پس از ساخت موفق FTR Zone مصرف می‌شود
     
     def _determine_break_type(self, direction: str) -> BreakType:
         """تعیین نوع شکست"""
