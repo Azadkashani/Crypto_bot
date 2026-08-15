@@ -15,7 +15,14 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import timezone, timedelta
 
 import config
-from indicators import add_rsi, add_ema, add_adx, add_volume_sma, detect_swings
+from indicators import (
+    add_rsi,
+    add_ema,
+    add_adx,
+    add_atr,
+    add_volume_sma,
+    detect_swings,
+)
 from choch import detect_choch
 from bos import detect_bos
 
@@ -44,7 +51,6 @@ class FailureAnalyzer:
             df = df.sort_index()
             enriched = df.copy()
 
-            # 5m پیش‌محاسبات کامل
             if tf == config.TIMEFRAME_5M:
                 enriched = add_ema(enriched, period=config.EMA_FAST, src_col='close', col_name='ema_fast')
                 enriched = add_ema(enriched, period=config.EMA_MID, src_col='close', col_name='ema_mid')
@@ -57,7 +63,6 @@ class FailureAnalyzer:
                 enriched = detect_bos(enriched)
                 data[tf] = {"df": enriched}
             else:
-                # برای 1h و 4h فقط EMA و ADX و RSI و ATR
                 enriched = add_ema(enriched, period=config.EMA_FAST, src_col='close', col_name='ema_fast')
                 enriched = add_ema(enriched, period=config.EMA_MID, src_col='close', col_name='ema_mid')
                 enriched = add_ema(enriched, period=config.EMA_SLOW, src_col='close', col_name='ema_slow')
@@ -76,9 +81,6 @@ class FailureAnalyzer:
         df = self._get_df(symbol, tf)
         if df.empty:
             return None
-        # فرض می‌کنیم کندل‌ها بسته شده‌اند و ایندکس زمان شروع است.
-        # برای مطابقت با decision_time که زمان بسته شدن است، باید کندلی که start + delta <= target_ts را پیدا کنیم.
-        # ساده‌سازی: مقایسه مستقیم ایندکس <= target_ts.
         pos = df.index.searchsorted(pd.Timestamp(target_ts), side='right') - 1
         if pos < 0:
             return None
@@ -96,7 +98,6 @@ class FailureAnalyzer:
         sl = float(trade.get("stop_loss"))
         tp = float(trade.get("take_profit"))
 
-        # داده 5m
         df5 = self._get_df(symbol, '5m')
         idx_entry = self._find_idx_for_time(symbol, '5m', entry_time)
         idx_exit = self._find_idx_for_time(symbol, '5m', exit_time)
@@ -121,137 +122,161 @@ class FailureAnalyzer:
         }
 
         if idx_entry is None:
-            row.update({k: None for k in [
-                "rsi_entry", "rsi_min_3", "rsi_min_5", "rsi_min_10", "rsi_min_20",
-                "atr_entry", "sl_distance_pct", "sl_atr_ratio",
-                "volume_ratio", "distance_to_support", "distance_to_resistance",
-                "choch_time", "candles_since_choch", "bos_time", "candles_since_bos",
-                "mae_pct", "mae_atr", "mfe_pct", "mfe_atr",
-                "post_sl_5", "post_sl_10", "post_sl_20", "post_sl_50",
-            ]})
-            row["failure_reasons"] = ["UNKNOWN"]
+            row.update({
+                "rsi_entry": None,
+                "rsi_min_3": None,
+                "rsi_min_5": None,
+                "rsi_min_10": None,
+                "rsi_min_20": None,
+                "atr_entry": None,
+                "sl_distance_pct": None,
+                "sl_atr_ratio": None,
+                "volume_ratio": None,
+                "distance_to_support": None,
+                "distance_to_resistance": None,
+                "choch_time": None,
+                "candles_since_choch": None,
+                "bos_time": None,
+                "candles_since_bos": None,
+                "mae_pct": None,
+                "mae_atr": None,
+                "mfe_pct": None,
+                "mfe_atr": None,
+                "post_sl_5": None,
+                "post_sl_10": None,
+                "post_sl_20": None,
+                "post_sl_50": None,
+                "failure_reasons": ["UNKNOWN"],
+            })
             return row
 
-        # مقادیر در لحظه ورود
         rsi_entry = df5[f"rsi_{config.RSI_PERIOD}"].iloc[idx_entry]
         atr_entry = df5[f"atr_{config.ATR_PERIOD}"].iloc[idx_entry]
         volume_entry = df5["volume"].iloc[idx_entry]
         volume_sma_entry = df5[f"volume_sma_{config.VOLUME_SMA_PERIOD}"].iloc[idx_entry]
         close_entry = df5["close"].iloc[idx_entry]
 
-        # RSI min در بازه‌های قبلی
-        if idx_entry >= 2:
-            rsi_min_3 = df5[f"rsi_{config.RSI_PERIOD}"].iloc[max(0, idx_entry-2):idx_entry+1].min()
-        else:
-            rsi_min_3 = np.nan
-        if idx_entry >= 4:
-            rsi_min_5 = df5[f"rsi_{config.RSI_PERIOD}"].iloc[max(0, idx_entry-4):idx_entry+1].min()
-        else:
-            rsi_min_5 = np.nan
-        if idx_entry >= 9:
-            rsi_min_10 = df5[f"rsi_{config.RSI_PERIOD}"].iloc[max(0, idx_entry-9):idx_entry+1].min()
-        else:
-            rsi_min_10 = np.nan
-        if idx_entry >= 19:
-            rsi_min_20 = df5[f"rsi_{config.RSI_PERIOD}"].iloc[max(0, idx_entry-19):idx_entry+1].min()
-        else:
-            rsi_min_20 = np.nan
+        def safe_min(arr, start, end):
+            if end < start or start < 0:
+                return np.nan
+            return arr[start:end].min()
 
-        # SL distance
+        rsi_arr = df5[f"rsi_{config.RSI_PERIOD}"].to_numpy()
+        rsi_min_3 = safe_min(rsi_arr, max(0, idx_entry-2), idx_entry+1)
+        rsi_min_5 = safe_min(rsi_arr, max(0, idx_entry-4), idx_entry+1)
+        rsi_min_10 = safe_min(rsi_arr, max(0, idx_entry-9), idx_entry+1)
+        rsi_min_20 = safe_min(rsi_arr, max(0, idx_entry-19), idx_entry+1)
+
         if direction == "LONG":
             sl_dist_pct = (entry_price - sl) / entry_price
         else:
             sl_dist_pct = (sl - entry_price) / entry_price
         sl_atr_ratio = sl_dist_pct / (atr_entry / entry_price) if atr_entry else np.nan
 
-        # Volume ratio
         volume_ratio = volume_entry / volume_sma_entry if volume_sma_entry else np.nan
 
-        # Support/Resistance از Swing ها
-        swing_high = df5["swing_high"].iloc[max(0, idx_entry-50):idx_entry+1]
-        swing_low = df5["swing_low"].iloc[max(0, idx_entry-50):idx_entry+1]
-        support = df5["low"].iloc[max(0, idx_entry-50):idx_entry+1].min()
-        resistance = df5["high"].iloc[max(0, idx_entry-50):idx_entry+1].max()
+        # Support/Resistance
+        lookback = max(0, idx_entry-50)
+        window = df5.iloc[lookback:idx_entry+1]
+        support = window["low"].min()
+        resistance = window["high"].max()
         distance_to_support = (entry_price - support) / entry_price if support else np.nan
         distance_to_resistance = (resistance - entry_price) / entry_price if resistance else np.nan
 
-        # CHOCH/BOS timestamps and candles since
+        # CHOCH/BOS
         bullish_choch = df5["bullish_choch"].iloc[:idx_entry+1]
         bearish_choch = df5["bearish_choch"].iloc[:idx_entry+1]
         bullish_bos = df5["bullish_bos"].iloc[:idx_entry+1]
         bearish_bos = df5["bearish_bos"].iloc[:idx_entry+1]
 
         if direction == "LONG":
-            last_choch = df5.index[bullish_choch[bullish_choch].index] if bullish_choch.any() else None
-            last_bos = df5.index[bullish_bos[bullish_bos].index] if bullish_bos.any() else None
-        else:
-            last_choch = df5.index[bearish_choch[bearish_choch].index] if bearish_choch.any() else None
-            last_bos = df5.index[bearish_bos[bearish_bos].index] if bearish_bos.any() else None
-
-        candles_since_choch = idx_entry - df5.index.get_loc(last_choch) if last_choch is not None else None
-        candles_since_bos = idx_entry - df5.index.get_loc(last_bos) if last_bos is not None else None
-
-        # MAE / MFE بین entry و exit
-        if idx_exit is not None and idx_exit >= idx_entry:
-            window = df5.iloc[idx_entry:idx_exit+1]
-            if direction == "LONG":
-                mae_price = window["low"].min()
-                mfe_price = window["high"].max()
+            if bullish_choch.any():
+                last_choch = df5.index[bullish_choch[bullish_choch].index][-1]
+                candles_since_choch = idx_entry - df5.index.get_loc(last_choch)
             else:
-                mae_price = window["high"].max()
-                mfe_price = window["low"].min()
+                last_choch = None
+                candles_since_choch = None
+            if bullish_bos.any():
+                last_bos = df5.index[bullish_bos[bullish_bos].index][-1]
+                candles_since_bos = idx_entry - df5.index.get_loc(last_bos)
+            else:
+                last_bos = None
+                candles_since_bos = None
+        else:
+            if bearish_choch.any():
+                last_choch = df5.index[bearish_choch[bearish_choch].index][-1]
+                candles_since_choch = idx_entry - df5.index.get_loc(last_choch)
+            else:
+                last_choch = None
+                candles_since_choch = None
+            if bearish_bos.any():
+                last_bos = df5.index[bearish_bos[bearish_bos].index][-1]
+                candles_since_bos = idx_entry - df5.index.get_loc(last_bos)
+            else:
+                last_bos = None
+                candles_since_bos = None
+
+        # MAE / MFE
+        if idx_exit is not None and idx_exit >= idx_entry:
+            window2 = df5.iloc[idx_entry:idx_exit+1]
+            if direction == "LONG":
+                mae_price = window2["low"].min()
+                mfe_price = window2["high"].max()
+            else:
+                mae_price = window2["high"].max()
+                mfe_price = window2["low"].min()
             mae_pct = (entry_price - mae_price) / entry_price if direction == "LONG" else (mae_price - entry_price) / entry_price
             mfe_pct = (mfe_price - entry_price) / entry_price if direction == "LONG" else (entry_price - mfe_price) / entry_price
             mae_atr = mae_pct / (atr_entry / entry_price) if atr_entry else np.nan
             mfe_atr = mfe_pct / (atr_entry / entry_price) if atr_entry else np.nan
         else:
-            mae_price = mfe_price = mae_pct = mfe_pct = mae_atr = mfe_atr = np.nan
+            mae_pct = mfe_pct = mae_atr = mfe_atr = np.nan
 
-        # حرکت بعد از SL (فقط برای تحلیل post-SL)
+        # Post-SL Analysis
         post_sl_5 = post_sl_10 = post_sl_20 = post_sl_50 = np.nan
         if idx_exit is not None and idx_exit < len(df5) - 1:
-            for horizon, col in [(5, "post_sl_5"), (10, "post_sl_10"), (20, "post_sl_20"), (50, "post_sl_50")]:
-                end = min(idx_exit + 1 + horizon, len(df5))
-                if end > idx_exit + 1:
-                    future = df5.iloc[idx_exit+1:end]
-                    if direction == "LONG":
-                        max_fav = future["high"].max() - entry_price
-                        max_adv = entry_price - future["low"].min()
-                        post_move = max(max_fav, 0) / entry_price if max_fav > 0 else -max_adv / entry_price
-                    else:
-                        max_fav = entry_price - future["low"].min()
-                        max_adv = future["high"].max() - entry_price
-                        post_move = max(max_fav, 0) / entry_price if max_fav > 0 else -max_adv / entry_price
-                    row[col] = post_move
-                else:
-                    row[col] = np.nan
+            future = df5.iloc[idx_exit+1:]
+            if direction == "LONG":
+                post_sl_5 = (future["high"].iloc[:5].max() - entry_price) / entry_price if len(future) >= 5 else np.nan
+                post_sl_10 = (future["high"].iloc[:10].max() - entry_price) / entry_price if len(future) >= 10 else np.nan
+                post_sl_20 = (future["high"].iloc[:20].max() - entry_price) / entry_price if len(future) >= 20 else np.nan
+                post_sl_50 = (future["high"].iloc[:50].max() - entry_price) / entry_price if len(future) >= 50 else np.nan
+            else:
+                post_sl_5 = (entry_price - future["low"].iloc[:5].min()) / entry_price if len(future) >= 5 else np.nan
+                post_sl_10 = (entry_price - future["low"].iloc[:10].min()) / entry_price if len(future) >= 10 else np.nan
+                post_sl_20 = (entry_price - future["low"].iloc[:20].min()) / entry_price if len(future) >= 20 else np.nan
+                post_sl_50 = (entry_price - future["low"].iloc[:50].min()) / entry_price if len(future) >= 50 else np.nan
 
         # Failure reasons
         reasons = []
-        # HTF alignment
-        if trade.get("regime_4h") != trade.get("direction") and trade.get("regime_1h") != trade.get("direction"):
+        if trade.get("regime_4h") != direction or trade.get("regime_1h") != direction:
             reasons.append("HTF_NOT_ALIGNED")
-        # RSI too late/early
         if not np.isnan(rsi_entry):
             if direction == "LONG":
-                if rsi_entry < 30: reasons.append("RSI_ENTRY_TOO_EARLY")
-                elif rsi_entry > 50: reasons.append("RSI_ENTRY_TOO_LATE")
+                if rsi_entry < 30:
+                    reasons.append("RSI_ENTRY_TOO_EARLY")
+                elif rsi_entry > 50:
+                    reasons.append("RSI_ENTRY_TOO_LATE")
             else:
-                if rsi_entry > 70: reasons.append("RSI_ENTRY_TOO_EARLY")
-                elif rsi_entry < 50: reasons.append("RSI_ENTRY_TOO_LATE")
-        # SL too tight
+                if rsi_entry > 70:
+                    reasons.append("RSI_ENTRY_TOO_EARLY")
+                elif rsi_entry < 50:
+                    reasons.append("RSI_ENTRY_TOO_LATE")
         if not np.isnan(sl_atr_ratio):
-            if sl_atr_ratio < 0.5: reasons.append("SL_TOO_TIGHT")
-            elif sl_atr_ratio > 2.0: reasons.append("SL_TOO_WIDE")
-        # Volume ratio
+            if sl_atr_ratio < 0.5:
+                reasons.append("SL_TOO_TIGHT")
+            elif sl_atr_ratio > 2.0:
+                reasons.append("SL_TOO_WIDE")
         if not np.isnan(volume_ratio):
-            if volume_ratio < 0.5: reasons.append("LOW_VOLUME_CONFIRMATION")
-            elif volume_ratio > 2.0: reasons.append("HIGH_VOLATILITY")
-        # Entry near resistance/support
+            if volume_ratio < 0.5:
+                reasons.append("LOW_VOLUME_CONFIRMATION")
+            elif volume_ratio > 2.0:
+                reasons.append("HIGH_VOLATILITY")
         if not np.isnan(distance_to_resistance):
-            if direction == "LONG" and distance_to_resistance < 0.01: reasons.append("ENTRY_TOO_CLOSE_TO_RESISTANCE")
-            if direction == "SHORT" and distance_to_support < 0.01: reasons.append("ENTRY_TOO_CLOSE_TO_SUPPORT")
-        # If no reasons
+            if direction == "LONG" and distance_to_resistance < 0.01:
+                reasons.append("ENTRY_TOO_CLOSE_TO_RESISTANCE")
+            if direction == "SHORT" and distance_to_support < 0.01:
+                reasons.append("ENTRY_TOO_CLOSE_TO_SUPPORT")
         if not reasons:
             reasons.append("UNKNOWN")
 
@@ -285,10 +310,7 @@ class FailureAnalyzer:
         return row
 
     def analyze(self, trades: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        """
-        تحلیل همه معاملات SL و تولید خلاصه.
-        """
-        # اطمینان از precompute همه نمادها
+        # precompute for all symbols
         for sym in self.symbols:
             if sym not in self._precomputed:
                 self._precompute_symbol(sym)
@@ -299,13 +321,11 @@ class FailureAnalyzer:
                 row = self._analyze_single_sl(t)
                 sl_rows.append(row)
 
-        # ساخت summary
         total_sl = len(sl_rows)
         total_tp = sum(1 for t in trades if t.get("exit_reason") == "TP")
         total_trades = len(trades)
         sl_rate = total_sl / total_trades if total_trades else 0.0
 
-        # تجمیع failure reasons
         reason_counts: Dict[str, int] = {}
         for row in sl_rows:
             for r in row["failure_reasons"]:
@@ -313,7 +333,6 @@ class FailureAnalyzer:
 
         failure_summary = []
         for reason, count in sorted(reason_counts.items(), key=lambda x: -x[1]):
-            # میانگین‌ها
             subset = [row for row in sl_rows if reason in row["failure_reasons"]]
             avg_loss = np.mean([row["pnl"] for row in subset]) if subset else 0.0
             avg_mae = np.nanmean([row["mae_pct"] for row in subset]) if subset else 0.0
