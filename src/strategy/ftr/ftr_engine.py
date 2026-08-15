@@ -59,7 +59,10 @@ class FTREngine:
         self.timeframe = config.timeframe
         
         # راه‌اندازی اجزا
-        self.structure_analyzer = StructureAnalyzer(config.structure_config)
+        self.structure_analyzer = StructureAnalyzer(
+            config=config.structure_config,
+            timeframe=config.timeframe
+        )
         self.breakout_detector = BreakoutDetector(config.breakout_config)
         self.impulse_detector = ImpulseDetector(config.impulse_config)
         self.base_detector = BaseDetector(config.base_config)
@@ -70,7 +73,7 @@ class FTREngine:
         self._active_zones: Dict[str, FTRZone] = {}
         self._all_zones: List[FTRZone] = []
         self._ftb_events: List[FTBEvent] = []
-        self._pending_structures: List[Tuple[StructureLevel, StructureBreak]] = []
+        self._pending_structures: List[Tuple[StructureLevel, StructureBreak, int]] = []
         
         # پیکربندی Swing
         if config.swing_config:
@@ -133,7 +136,7 @@ class FTREngine:
                     break_strength=breakout['break_strength']
                 )
                 
-                self._pending_structures.append((level, structure_break))
+                self._pending_structures.append((level, structure_break, breakout['break_index']))
                 
                 # ۳. تشخیص Impulse
                 displacement = self.impulse_detector.detect_impulse(
@@ -172,6 +175,7 @@ class FTREngine:
             if self._check_invalidation(ohlcv_data, current_index, zone):
                 zone.invalidate(ohlcv_data[current_index]['timestamp'])
                 del self._active_zones[zone_id]
+                self.ftb_detector.remove_zone(zone_id)
                 result.add_diagnostic(f"Zone invalidated: {zone_id}")
                 continue
             
@@ -186,6 +190,12 @@ class FTREngine:
                 # Zone استفاده شده
                 zone.consume(ohlcv_data[current_index]['timestamp'])
                 del self._active_zones[zone_id]
+                self.ftb_detector.remove_zone(zone_id)
+            
+            elif ftb_event and not ftb_event.is_valid:
+                # اگر FTB نامعتبر بود، Zone را ابطال نکن
+                # فقط ثبت تشخیص
+                result.add_diagnostic(f"FTB rejected for zone {zone_id}: {ftb_event.validation_reasons}")
         
         return result
     
