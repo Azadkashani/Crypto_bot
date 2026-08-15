@@ -105,22 +105,26 @@ def create_bullish_ftr_scenario() -> List[dict]:
         lows.append(price - 0.6)
     
     # فاز ۴: Base (تثبیت) — محدوده ۱۲۶-۱۳۰
+    # کندل‌های Base: 6 کندل خنثی + 1 کندل خروجی قوی
     base_high = 130
     base_low = 126
-    for i in range(7):
+    
+    # ۶ کندل خنثی
+    for i in range(6):
         price = base_low + (i % 3) * 1.3
         opens.append(price)
         prices.append(price)
         highs.append(base_high)
         lows.append(base_low)
     
-    # فاز ۵: خروج قوی از Base (Continuation)
+    # کندل خروجی قوی از Base (کندل آخر Base)
     price = base_high + 2.5
-    opens.append(base_high + 0.5)
-    prices.append(price)
+    opens.append(base_high)  # open در بالای Base
+    prices.append(price)     # close بالاتر
     highs.append(price + 0.7)
-    lows.append(base_high - 0.3)
+    lows.append(base_high - 0.5)  # low داخل Base
     
+    # فاز ۵: ادامه صعود
     for i in range(5):
         price = base_high + 4 + i * 1.5
         opens.append(price - 1.0)
@@ -211,10 +215,11 @@ def create_bearish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.6)
         lows.append(price - 0.5)
     
-    # Base
+    # Base نزولی
     base_high = 176
     base_low = 172
-    for i in range(7):
+    
+    for i in range(6):
         price = base_high - (i % 3) * 1.3
         opens.append(price)
         prices.append(price)
@@ -223,9 +228,9 @@ def create_bearish_ftr_scenario() -> List[dict]:
     
     # خروج نزولی از Base
     price = base_low - 2.5
-    opens.append(base_low - 0.5)
+    opens.append(base_low)
     prices.append(price)
-    highs.append(base_low + 0.3)
+    highs.append(base_low + 0.5)
     lows.append(price - 0.7)
     
     for i in range(5):
@@ -382,15 +387,11 @@ class TestFTRDetection:
         for i in range(2, 35):
             engine.process_bar(ohlcv_data, i)
         
-        # بررسی سطوح ساختاری
         structure_levels = engine.structure_analyzer.get_structure_levels()
         
         for level in structure_levels:
             if level.level_type in ["RESISTANCE", "SUPPLY"]:
-                # سطح مقاومت نباید مصرف شده باشد
-                # مگر اینکه Zone ساخته شده باشد
                 if not level.is_consumed:
-                    # سطح مصرف نشده — این مورد انتظار است
                     pass
     
     def test_break_not_processed_twice(self):
@@ -405,7 +406,6 @@ class TestFTRDetection:
             if result.zones:
                 zones.extend(result.zones)
         
-        # بررسی عدم وجود Zone تکراری
         zone_ids = [z.zone_id for z in zones]
         assert len(zone_ids) == len(set(zone_ids)), "Zone تکراری وجود دارد"
     
