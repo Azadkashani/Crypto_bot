@@ -69,5 +69,31 @@ MAX_CONCURRENT_POSITIONS = 4   # حداکثر ۴ پوزیشن همزمان
 MAX_TOTAL_RISK = 0.04          # حداکثر ریسک کل ۴٪
 ACCOUNT_BALANCE = 1000.0
 
-# لوریج قدیمی برای حفظ سازگاری با فازهای قبلی
+# لوریج قدیمی برای سازگاری با فازهای قبلی
 LEVERAGE = 20
+
+# --- Signal Scoring Weights ---
+REGIME_SCORE_WEIGHT = 25
+RSI_SCORE_WEIGHT = 20
+CHOCH_SCORE_WEIGHT = 20
+BOS_SCORE_WEIGHT = 20
+VOLUME_SCORE_WEIGHT = 10
+RR_SCORE_WEIGHT = 5
+
+# --- Phase 19: Live / Paper Trading ---
+PAPER_TRADING = True  # هرگز False نکن مگر با تایید صریح
+
+SYMBOL_WHITELIST = [
+    "BTC/USDT:USDT",
+    "ETH/USDT:USDT",
+    "SOL/USDT:USDT",
+    "XRP/USDT:USDT",
+    "DOGE/USDT:USDT",
+    "HYPE/USDT:USDT",
+    "BNB/USDT:USDT",
+    "ZEC/USDT:USDT",
+    "ADA/USDT:USDT",
+    "UNI/USDT:USDT",
+    "SUI/USDT:USDT",
+    "LINK/USDT:USDT",
+]
