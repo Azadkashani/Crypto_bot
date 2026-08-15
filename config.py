@@ -100,3 +100,10 @@ SYMBOL_WHITELIST = [
 
 # --- Live Price Sync ---
 MAX_ENTRY_PRICE_DEVIATION = 0.002   # حداکثر انحراف مجاز قیمت ورود از قیمت لحظه‌ای (0.2%)
+
+# --- Trading Costs (Backtest Realism) ---
+MAKER_FEE_RATE = 0.0002        # Fee سازنده
+TAKER_FEE_RATE = 0.0005        # Fee گیرنده (برای سفارش‌های Market)
+SLIPPAGE_BPS = 2               # ۲ بیس پوینت = 0.02%
+SLIPPAGE_RATE = SLIPPAGE_BPS / 10000
+ENABLE_FUNDING = False         # فعلاً فعال نمی‌شود؛ نیاز به داده تاریخی Funding دارد
