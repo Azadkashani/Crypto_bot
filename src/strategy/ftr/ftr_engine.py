@@ -49,11 +49,6 @@ class FTREngine:
     
     Pipeline:
     Structure Break → Pending → Impulse → Base → FTR Zone → FTB
-    
-    اصل حیاتی:
-    - فقط داده تا current_index قابل مشاهده است
-    - Break فقط پس از ثبت واقعی پردازش می‌شود
-    - Break ناقص Pending باقی می‌ماند
     """
     
     def __init__(self, config: FTREngineConfig):
@@ -75,6 +70,7 @@ class FTREngine:
         self._ftb_events: List[FTBEvent] = []
         self._processed_breaks: set = set()
         self._pending_breaks: Dict[tuple, StructureBreak] = {}
+        self._zone_creation_indices: Dict[str, int] = {}
         
         if config.swing_config:
             self.structure_analyzer.swing_detector.config = config.swing_config
@@ -91,28 +87,21 @@ class FTREngine:
         self._ftb_events.clear()
         self._processed_breaks.clear()
         self._pending_breaks.clear()
+        self._zone_creation_indices.clear()
     
     def process_bar(self, ohlcv_data: List[dict], current_index: int) -> FTRDetectionResult:
         """
         پردازش کندل جاری و تشخیص FTR
-        
-        Args:
-            ohlcv_data: لیست کامل کندل‌های OHLCV
-            current_index: ایندکس کندل جاری
-        
-        Returns:
-            نتیجه تشخیص FTR
         """
         result = FTRDetectionResult()
         
         if current_index < 2:
             return result
         
-        # داده قابل مشاهده: فقط تا current_index
         visible_ohlcv = ohlcv_data[:current_index + 1]
         current_timestamp = visible_ohlcv[current_index]['timestamp']
         
-        # ۱. تحلیل ساختار بازار (فقط با داده قابل مشاهده)
+        # ۱. تحلیل ساختار بازار
         structure_state = self.structure_analyzer.process_bar(visible_ohlcv, current_index)
         result.structure_state = structure_state
         
@@ -125,11 +114,9 @@ class FTREngine:
             if break_key in self._processed_breaks:
                 continue
             
-            # اگر Break مربوط به آینده است، رد شود
             if structure_break.break_timestamp > current_timestamp:
                 continue
             
-            # افزودن به Pending
             if break_key not in self._pending_breaks:
                 self._pending_breaks[break_key] = structure_break
         
@@ -146,13 +133,11 @@ class FTREngine:
                 del self._pending_breaks[break_key]
                 continue
             
-            # یافتن break_index در داده قابل مشاهده
             break_index = self._find_break_index(visible_ohlcv, structure_break.break_timestamp)
             
             if break_index is None:
                 continue
             
-            # ۴. تشخیص Impulse (فقط با داده قابل مشاهده)
             displacement = self.impulse_detector.detect_impulse(
                 visible_ohlcv, break_index, structure_break.direction
             )
@@ -160,13 +145,11 @@ class FTREngine:
             if not displacement or not displacement.is_valid:
                 continue
             
-            # ۵. تشخیص Base (فقط با داده قابل مشاهده)
             base = self.base_detector.detect_base(visible_ohlcv, displacement)
             
             if not base or not base.is_valid:
                 continue
             
-            # ۶. ساخت FTR Zone
             zone = self.zone_constructor.construct_zone(
                 symbol=self.symbol,
                 timeframe=self.timeframe,
@@ -187,16 +170,23 @@ class FTREngine:
                 self._active_zones[zone.zone_id] = zone
                 self._all_zones.append(zone)
                 self.ftb_detector.add_zone(zone)
+                self._zone_creation_indices[zone.zone_id] = current_index
                 
                 result.add_zone(zone)
                 result.add_diagnostic(f"FTR zone created: {zone.zone_id}")
         
-        # ۷. بررسی FTB و Invalidation برای Zoneهای فعال
+        # ۴. بررسی FTB و Invalidation برای Zoneهای فعال
         for zone_id, zone in list(self._active_zones.items()):
+            # Skip FTB check on the same candle Zone was created
+            creation_index = self._zone_creation_indices.get(zone_id, -1)
+            if creation_index >= current_index:
+                continue
+            
             if self._check_invalidation(visible_ohlcv, current_index, zone):
                 zone.invalidate(current_timestamp)
                 del self._active_zones[zone_id]
                 self.ftb_detector.remove_zone(zone_id)
+                del self._zone_creation_indices[zone_id]
                 result.add_diagnostic(f"Zone invalidated: {zone_id}")
                 continue
             
@@ -210,6 +200,7 @@ class FTREngine:
                 zone.consume(current_timestamp)
                 del self._active_zones[zone_id]
                 self.ftb_detector.remove_zone(zone_id)
+                del self._zone_creation_indices[zone_id]
             
             elif ftb_event and not ftb_event.is_valid:
                 result.add_diagnostic(f"FTB rejected for zone {zone_id}: {ftb_event.validation_reasons}")
@@ -236,7 +227,6 @@ class FTREngine:
         )
     
     def _find_break_index(self, ohlcv_data: List[dict], break_timestamp: int) -> Optional[int]:
-        """یافتن ایندکس کندل شکست در داده قابل مشاهده"""
         for i, candle in enumerate(ohlcv_data):
             if candle['timestamp'] == break_timestamp:
                 return i
