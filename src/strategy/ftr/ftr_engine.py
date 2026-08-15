@@ -48,7 +48,12 @@ class FTREngine:
     موتور اصلی تشخیص FTR
     
     Pipeline:
-    Structure Break → Impulse → Base → FTR Zone → FTB
+    Structure Break → Pending → Impulse → Base → FTR Zone → FTB
+    
+    اصل حیاتی:
+    - فقط داده تا current_index قابل مشاهده است
+    - Break فقط پس از ثبت واقعی پردازش می‌شود
+    - Break ناقص Pending باقی می‌ماند
     """
     
     def __init__(self, config: FTREngineConfig):
@@ -69,6 +74,7 @@ class FTREngine:
         self._all_zones: List[FTRZone] = []
         self._ftb_events: List[FTBEvent] = []
         self._processed_breaks: set = set()
+        self._pending_breaks: Dict[tuple, StructureBreak] = {}
         
         if config.swing_config:
             self.structure_analyzer.swing_detector.config = config.swing_config
@@ -84,55 +90,84 @@ class FTREngine:
         self._all_zones.clear()
         self._ftb_events.clear()
         self._processed_breaks.clear()
+        self._pending_breaks.clear()
     
     def process_bar(self, ohlcv_data: List[dict], current_index: int) -> FTRDetectionResult:
         """
         پردازش کندل جاری و تشخیص FTR
+        
+        Args:
+            ohlcv_data: لیست کامل کندل‌های OHLCV
+            current_index: ایندکس کندل جاری
+        
+        Returns:
+            نتیجه تشخیص FTR
         """
         result = FTRDetectionResult()
         
         if current_index < 2:
             return result
         
-        # ۱. تحلیل ساختار بازار
-        structure_state = self.structure_analyzer.process_bar(ohlcv_data, current_index)
+        # ۱. تحلیل ساختار بازار (فقط تا current_index)
+        visible_ohlcv = ohlcv_data[:current_index + 1]
+        structure_state = self.structure_analyzer.process_bar(visible_ohlcv, current_index)
         result.structure_state = structure_state
         
-        # ۲. دریافت Structure Breakهای ثبت‌شده
+        # ۲. دریافت Breakهای ثبت‌شده و افزودن به Pending
         recent_breaks = self.structure_analyzer.get_recent_breaks()
         
         for structure_break in recent_breaks:
             break_key = self._make_break_key(structure_break)
             
+            # اگر قبلاً پردازش شده، رد شود
             if break_key in self._processed_breaks:
+                continue
+            
+            # اگر Break مربوط به آینده است، رد شود
+            if structure_break.break_timestamp > ohlcv_data[current_index]['timestamp']:
+                continue
+            
+            # افزودن به Pending
+            if break_key not in self._pending_breaks:
+                self._pending_breaks[break_key] = structure_break
+        
+        # ۳. پردازش Pending Breakها
+        for break_key, structure_break in list(self._pending_breaks.items()):
+            if break_key in self._processed_breaks:
+                del self._pending_breaks[break_key]
                 continue
             
             level = structure_break.broken_level
             
+            # اگر سطح مصرف شده، رد شود
             if level.is_consumed:
                 self._processed_breaks.add(break_key)
+                del self._pending_breaks[break_key]
                 continue
             
-            break_index = self._find_break_index(ohlcv_data, structure_break.break_timestamp)
+            # یافتن break_index از timestamp
+            break_index = self._find_break_index(visible_ohlcv, structure_break.break_timestamp)
             
             if break_index is None:
                 continue
             
-            # ۳. تشخیص Impulse
+            # ۴. تشخیص Impulse (فقط با داده قابل مشاهده)
             displacement = self.impulse_detector.detect_impulse(
-                ohlcv_data, break_index, structure_break.direction
+                visible_ohlcv, break_index, structure_break.direction
             )
             
             if not displacement or not displacement.is_valid:
+                # Impulse هنوز کامل نشده — Pending باقی می‌ماند
                 continue
             
-            # ۴. تشخیص Base
-            base = self.base_detector.detect_base(ohlcv_data, displacement)
+            # ۵. تشخیص Base (فقط با داده قابل مشاهده)
+            base = self.base_detector.detect_base(visible_ohlcv, displacement)
             
             if not base or not base.is_valid:
+                # Base هنوز کامل نشده — Pending باقی می‌ماند
                 continue
             
-            # ۵. ساخت FTR Zone
+            # ۶. ساخت FTR Zone
             zone = self.zone_constructor.construct_zone(
                 symbol=self.symbol,
                 timeframe=self.timeframe,
@@ -145,9 +180,10 @@ class FTREngine:
             )
             
             if zone and self.zone_constructor.validate_zone(zone):
-                # ۶. موفقیت — مصرف سطح و علامت‌گذاری Break
+                # ۷. موفقیت — مصرف سطح و علامت‌گذاری Break
                 level.is_consumed = True
                 self._processed_breaks.add(break_key)
+                del self._pending_breaks[break_key]
                 
                 zone.update_state(FTRZoneState.ACTIVE)
                 self._active_zones[zone.zone_id] = zone
@@ -157,7 +193,7 @@ class FTREngine:
                 result.add_zone(zone)
                 result.add_diagnostic(f"FTR zone created: {zone.zone_id}")
         
-        # ۷. بررسی FTB برای Zoneهای فعال
+        # ۸. بررسی FTB و Invalidation برای Zoneهای فعال
         for zone_id, zone in list(self._active_zones.items()):
             if self._check_invalidation(ohlcv_data, current_index, zone):
                 zone.invalidate(ohlcv_data[current_index]['timestamp'])
@@ -166,7 +202,7 @@ class FTREngine:
                 result.add_diagnostic(f"Zone invalidated: {zone_id}")
                 continue
             
-            ftb_event = self.ftb_detector.check_ftb(ohlcv_data, current_index, zone)
+            ftb_event = self.ftb_detector.check_ftb(visible_ohlcv, current_index, zone)
             
             if ftb_event and ftb_event.is_valid:
                 self._ftb_events.append(ftb_event)
@@ -193,6 +229,10 @@ class FTREngine:
     def get_ftb_events(self) -> List[FTBEvent]:
         """دریافت رویدادهای FTB"""
         return self._ftb_events.copy()
+    
+    def get_pending_breaks(self) -> List[StructureBreak]:
+        """دریافت Breakهای در انتظار"""
+        return list(self._pending_breaks.values())
     
     def _make_break_key(self, structure_break: StructureBreak) -> tuple:
         """ساخت کلید یکتا برای جلوگیری از پردازش تکراری"""
