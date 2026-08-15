@@ -45,26 +45,10 @@ class SignalQualityEngine:
         timestamp: int,
         trend_direction: Optional[str] = None
     ) -> SignalQualityResult:
-        """
-        ارزیابی کیفیت یک Setup FTR/FTB
-        
-        Args:
-            symbol: نماد معاملاتی
-            timeframe: تایم‌فریم
-            zone: FTR Zone
-            ftb_event: رویداد FTB
-            structure_break: شکست ساختاری
-            market_structure_type: نوع ساختار بازار
-            timestamp: timestamp سیگنال
-            trend_direction: جهت روند (اختیاری) — "LONG", "SHORT", None
-        
-        Returns:
-            SignalQualityResult
-        """
+        """ارزیابی کیفیت یک Setup FTR/FTB"""
         self._signal_counter += 1
         signal_id = f"SIG_{self._signal_counter}_{timestamp}"
         
-        # ارزیابی هر بخش
         structure_score, structure_positive, structure_warnings = self._score_structure(
             structure_break, market_structure_type
         )
@@ -83,7 +67,6 @@ class SignalQualityEngine:
             zone.direction, trend_direction
         )
         
-        # جمع امتیازها
         component_scores = ComponentScores(
             structure_score=structure_score,
             displacement_score=displacement_score,
@@ -94,27 +77,16 @@ class SignalQualityEngine:
         )
         
         total_score = component_scores.total
-        
-        # طبقه‌بندی
         classification = self._classify(total_score)
         
-        # جمع‌آوری عوامل
         positive_factors = (
-            structure_positive +
-            displacement_positive +
-            base_positive +
-            zone_positive +
-            ftb_positive +
-            trend_positive
+            structure_positive + displacement_positive +
+            base_positive + zone_positive + ftb_positive + trend_positive
         )
         
         warning_factors = (
-            structure_warnings +
-            displacement_warnings +
-            base_warnings +
-            zone_warnings +
-            ftb_warnings +
-            trend_warnings
+            structure_warnings + displacement_warnings +
+            base_warnings + zone_warnings + ftb_warnings + trend_warnings
         )
         
         rejection_reasons = []
@@ -137,10 +109,32 @@ class SignalQualityEngine:
                 'zone_id': zone.zone_id,
                 'break_type': structure_break.break_type.value,
                 'ftb_touch_type': ftb_event.touch_type.value if ftb_event.touch_type else None,
-                'ftb_penetration_depth': ftb_event.penetration_depth,
+                'ftb_penetration_ratio': self._calculate_ftb_penetration_ratio(ftb_event, zone),
                 'zone_height': zone.zone_height,
             }
         )
+    
+    def _calculate_ftb_penetration_ratio(self, ftb_event: FTBEvent, zone: FTRZone) -> float:
+        """
+        محاسبه نسبت نفوذ FTB به Zone
+        
+        برای LONG: penetration = zone_high - touch_price
+        برای SHORT: penetration = touch_price - zone_low
+        
+        نسبت = penetration / zone_height
+        """
+        if zone.zone_height <= 0:
+            return 0.0
+        
+        if zone.direction == "LONG":
+            penetration = zone.zone_high - ftb_event.price
+        else:
+            penetration = ftb_event.price - zone.zone_low
+        
+        # اگر قیمت خارج از Zone باشد، penetration منفی است
+        penetration = max(0.0, penetration)
+        
+        return min(penetration / zone.zone_height, 1.0)
     
     def _score_structure(
         self,
@@ -152,7 +146,6 @@ class SignalQualityEngine:
         positive = []
         warnings = []
         
-        # BOS قوی‌تر از CHOCH است
         if structure_break.break_type == BreakType.BOS:
             score += self.config.structure_weight * 0.6
             positive.append("Strong BOS break")
@@ -160,7 +153,6 @@ class SignalQualityEngine:
             score += self.config.structure_weight * 0.4
             warnings.append("CHOCH break (not BOS)")
         
-        # هم‌جهتی با ساختار بازار
         if market_structure_type == StructureType.BULLISH and structure_break.direction == "LONG":
             score += self.config.structure_weight * 0.4
             positive.append("Bullish structure aligned")
@@ -170,7 +162,6 @@ class SignalQualityEngine:
         else:
             warnings.append("Structure not aligned with break direction")
         
-        # قدرت شکست
         if structure_break.break_strength >= 0.7:
             score += self.config.structure_weight * 0.3
             positive.append("Strong break strength")
@@ -187,19 +178,16 @@ class SignalQualityEngine:
             warnings.append("No valid displacement")
             return score, positive, warnings
         
-        # فاصله حرکت
         if displacement.distance > 0:
             score += self.config.displacement_weight * 0.3
             positive.append(f"Valid displacement: {displacement.distance:.4f}")
         
-        # تعداد کندل‌ها
         if displacement.candle_count >= self.config.good_displacement_candles:
             score += self.config.displacement_weight * 0.3
             positive.append(f"Good displacement candles: {displacement.candle_count}")
         elif displacement.candle_count < 2:
             warnings.append(f"Weak displacement: only {displacement.candle_count} candles")
         
-        # قدرت
         if displacement.strength_score >= 0.6:
             score += self.config.displacement_weight * 0.4
             positive.append(f"Strong displacement: {displacement.strength_score:.2f}")
@@ -218,7 +206,6 @@ class SignalQualityEngine:
             warnings.append("No valid base")
             return score, positive, warnings
         
-        # تعداد کندل Base
         if self.config.good_base_candles <= base.duration_bars <= self.config.max_base_candles:
             score += self.config.base_weight * 0.4
             positive.append(f"Good base duration: {base.duration_bars} candles")
@@ -227,12 +214,10 @@ class SignalQualityEngine:
         else:
             warnings.append(f"Base too long: {base.duration_bars} candles")
         
-        # فشردگی
         if base.compression_ratio >= 0.3:
             score += self.config.base_weight * 0.3
             positive.append(f"Good base compression: {base.compression_ratio:.2f}")
         
-        # کیفیت
         if base.quality_score >= 0.5:
             score += self.config.base_weight * 0.3
             positive.append(f"Good base quality: {base.quality_score:.2f}")
@@ -247,7 +232,6 @@ class SignalQualityEngine:
         positive = []
         warnings = []
         
-        # ارتفاع Zone نسبت به قیمت
         if zone.zone_midpoint > 0:
             height_pct = zone.zone_height / zone.zone_midpoint
             
@@ -257,7 +241,6 @@ class SignalQualityEngine:
             elif height_pct > 0.05:
                 warnings.append(f"Wide zone: {height_pct:.4f}")
         
-        # وضعیت Zone
         if zone.state == FTRZoneState.FIRST_TOUCH:
             score += self.config.zone_weight * 0.3
             positive.append("Zone in first touch state")
@@ -265,7 +248,6 @@ class SignalQualityEngine:
             score += self.config.zone_weight * 0.2
             positive.append("Zone active")
         
-        # نقطه ابطال
         if zone.invalidation_level is not None:
             if zone.direction == "LONG":
                 if zone.invalidation_level < zone.zone_low:
@@ -279,7 +261,7 @@ class SignalQualityEngine:
         return min(score, self.config.zone_weight), positive, warnings
     
     def _score_ftb(self, ftb_event: FTBEvent, zone: FTRZone) -> tuple:
-        """امتیازدهی به کیفیت FTB"""
+        """امتیازدهی به کیفیت FTB با حساسیت به عمق نفوذ"""
         score = 0.0
         positive = []
         warnings = []
@@ -293,27 +275,31 @@ class SignalQualityEngine:
             score += self.config.ftb_weight * 0.3
             positive.append("First touch confirmed")
         
-        # عمق نفوذ
-        zone_height = zone.zone_height
-        if zone_height > 0:
-            penetration_pct = ftb_event.penetration_depth / zone_height
-            
-            if penetration_pct <= self.config.shallow_touch_depth_pct:
-                score += self.config.ftb_weight * 0.4
-                positive.append(f"Shallow touch: {penetration_pct:.2f}")
-            elif penetration_pct >= self.config.deep_touch_depth_pct:
-                warnings.append(f"Deep touch: {penetration_pct:.2f}")
-                score += self.config.ftb_weight * 0.1
-            else:
-                score += self.config.ftb_weight * 0.25
-                positive.append(f"Moderate touch depth: {penetration_pct:.2f}")
+        # محاسبه نسبت نفوذ
+        penetration_ratio = self._calculate_ftb_penetration_ratio(ftb_event, zone)
+        
+        # امتیازدهی بر اساس عمق نفوذ
+        if penetration_ratio <= self.config.shallow_touch_depth_pct:
+            score += self.config.ftb_weight * 0.4
+            positive.append(f"Shallow touch: {penetration_ratio:.2f}")
+        elif penetration_ratio <= 0.5:
+            score += self.config.ftb_weight * 0.3
+            positive.append(f"Moderate touch: {penetration_ratio:.2f}")
+        elif penetration_ratio <= self.config.deep_touch_depth_pct:
+            score += self.config.ftb_weight * 0.2
+            warnings.append(f"Deep touch: {penetration_ratio:.2f}")
+        else:
+            score += self.config.ftb_weight * 0.1
+            warnings.append(f"Very deep touch: {penetration_ratio:.2f}")
         
         # نوع لمس
         if ftb_event.touch_type == FTBTouchType.WICK:
-            score += self.config.ftb_weight * 0.3
+            score += self.config.ftb_weight * 0.2
             positive.append("Wick touch (cleaner)")
         elif ftb_event.touch_type == FTBTouchType.PENETRATION:
             warnings.append("Deep penetration touch")
+            # امتیاز اضافه برای penetration type
+            score += self.config.ftb_weight * 0.1
         
         return min(score, self.config.ftb_weight), positive, warnings
     
@@ -328,7 +314,6 @@ class SignalQualityEngine:
         warnings = []
         
         if trend_direction is None:
-            # روند نامشخص — امتیاز خنثی
             score += self.config.trend_weight * 0.5
             warnings.append("No trend data available")
             return score, positive, warnings
