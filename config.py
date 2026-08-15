@@ -97,3 +97,6 @@ SYMBOL_WHITELIST = [
     "SUI/USDT:USDT",
     "LINK/USDT:USDT",
 ]
+
+# --- Live Price Sync ---
+MAX_ENTRY_PRICE_DEVIATION = 0.002   # حداکثر انحراف مجاز قیمت ورود از قیمت لحظه‌ای (0.2%)
