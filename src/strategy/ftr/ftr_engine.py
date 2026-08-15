@@ -108,8 +108,11 @@ class FTREngine:
         if current_index < 2:
             return result
         
-        # ۱. تحلیل ساختار بازار (فقط تا current_index)
+        # داده قابل مشاهده: فقط تا current_index
         visible_ohlcv = ohlcv_data[:current_index + 1]
+        current_timestamp = visible_ohlcv[current_index]['timestamp']
+        
+        # ۱. تحلیل ساختار بازار (فقط با داده قابل مشاهده)
         structure_state = self.structure_analyzer.process_bar(visible_ohlcv, current_index)
         result.structure_state = structure_state
         
@@ -124,7 +127,7 @@ class FTREngine:
                 continue
             
             # اگر Break مربوط به آینده است، رد شود
-            if structure_break.break_timestamp > ohlcv_data[current_index]['timestamp']:
+            if structure_break.break_timestamp > current_timestamp:
                 continue
             
             # افزودن به Pending
@@ -145,7 +148,7 @@ class FTREngine:
                 del self._pending_breaks[break_key]
                 continue
             
-            # یافتن break_index از timestamp
+            # یافتن break_index در داده قابل مشاهده
             break_index = self._find_break_index(visible_ohlcv, structure_break.break_timestamp)
             
             if break_index is None:
@@ -176,7 +179,7 @@ class FTREngine:
                 structure_break=structure_break,
                 displacement=displacement,
                 base=base,
-                current_timestamp=ohlcv_data[current_index]['timestamp']
+                current_timestamp=current_timestamp
             )
             
             if zone and self.zone_constructor.validate_zone(zone):
@@ -195,8 +198,8 @@ class FTREngine:
         
         # ۸. بررسی FTB و Invalidation برای Zoneهای فعال
         for zone_id, zone in list(self._active_zones.items()):
-            if self._check_invalidation(ohlcv_data, current_index, zone):
-                zone.invalidate(ohlcv_data[current_index]['timestamp'])
+            if self._check_invalidation(visible_ohlcv, current_index, zone):
+                zone.invalidate(current_timestamp)
                 del self._active_zones[zone_id]
                 self.ftb_detector.remove_zone(zone_id)
                 result.add_diagnostic(f"Zone invalidated: {zone_id}")
@@ -209,7 +212,7 @@ class FTREngine:
                 result.add_ftb(ftb_event)
                 result.add_diagnostic(f"FTB detected: {zone_id}")
                 
-                zone.consume(ohlcv_data[current_index]['timestamp'])
+                zone.consume(current_timestamp)
                 del self._active_zones[zone_id]
                 self.ftb_detector.remove_zone(zone_id)
             
