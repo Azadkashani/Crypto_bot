@@ -37,12 +37,6 @@ class StructureAnalyzerConfig:
 class StructureAnalyzer:
     """
     تحلیل ساختار بازار با استفاده از Swing Points
-    
-    این کلاس مسئول:
-    - تعیین روند (Bullish/Bearish/Ranging)
-    - تشخیص BOS (Break of Structure)
-    - تشخیص CHoCH (Change of Character)
-    - ایجاد سطوح ساختاری مهم
     """
     
     def __init__(self, config: Optional[StructureAnalyzerConfig] = None, timeframe: str = ""):
@@ -67,13 +61,6 @@ class StructureAnalyzer:
     def process_bar(self, ohlcv_data: List[dict], current_index: int) -> MarketStructureState:
         """
         پردازش کندل جاری و به‌روزرسانی ساختار بازار
-        
-        Args:
-            ohlcv_data: لیست کندل‌های OHLCV
-            current_index: ایندکس کندل جاری
-        
-        Returns:
-            وضعیت فعلی ساختار بازار
         """
         # تشخیص Swingهای جدید
         new_swings = self.swing_detector.process_bar(ohlcv_data, current_index)
@@ -133,7 +120,7 @@ class StructureAnalyzer:
                 else:
                     self._update_structure_type(StructureType.RANGING)
         
-        # ایجاد/به‌روزرسانی سطوح ساختاری
+        # به‌روزرسانی سطوح ساختاری
         self._update_structure_levels()
     
     def _update_structure_type(self, new_type: StructureType):
@@ -164,11 +151,11 @@ class StructureAnalyzer:
     
     def _update_structure_levels(self):
         """به‌روزرسانی سطوح ساختاری از Swingها"""
-        # ایجاد سطوح از Swing Highها
+        # Swing Highها به عنوان مقاومت
         swing_highs = [s for s in self._all_swings if s.swing_type == SwingType.HIGH]
         self._create_levels_from_swings(swing_highs, "RESISTANCE")
         
-        # ایجاد سطوح از Swing Lowها
+        # Swing Lowها به عنوان حمایت
         swing_lows = [s for s in self._all_swings if s.swing_type == SwingType.LOW]
         self._create_levels_from_swings(swing_lows, "SUPPORT")
     
