@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-اجرای Real Market Historical Backtest روی داده‌های واقعی Gate.io Futures.
+اجرای Real Market Historical Backtest با هزینه‌های واقعی معاملات.
 
 این اسکریپت:
     - بازارهای ۵ نماد اصلی را بررسی می‌کند.
@@ -8,14 +8,14 @@
     - اعتبارسنجی کامل داده انجام می‌دهد.
     - فقط در صورت کامل بودن همه داده‌ها، بک‌تست را اجرا می‌کند.
     - از نسخه بهینه‌شده موتور بک‌تست استفاده می‌کند.
-    - در پایان، جزئیات تمام معاملات را به‌صورت جدول نمایش می‌دهد.
+    - هزینه‌های Fee و Slippage را در نتایج نشان می‌دهد.
 
 هیچ سفارش واقعی ارسال نمی‌شود.
 """
 
 import os
 import pandas as pd
-from datetime import datetime, timezone, timedelta
+from datetime import timezone, timedelta
 
 from gate_exchange import GateExchange
 from historical_data import (
@@ -29,6 +29,8 @@ from historical_data import (
 )
 from backtest_engine import OptimizedBacktestRunner
 from historical_backtest import HistoricalDataProvider
+
+import config
 
 # ---------------------------------------------------------------
 # تنظیمات بک‌تست
@@ -55,8 +57,10 @@ SYMBOLS = [
 TIMEFRAMES = ["5m", "1h", "4h"]
 
 INITIAL_BALANCE = 1000.0
-FEE_RATE = 0.0005
-SLIPPAGE_RATE = 0.0002
+
+# هزینه‌های واقعی از config خوانده می‌شوند
+FEE_RATE = config.TAKER_FEE_RATE
+SLIPPAGE_RATE = config.SLIPPAGE_RATE
 
 WARMUP_BARS = {
     "5m": 500,
@@ -90,11 +94,13 @@ class DictHistoricalDataProvider(HistoricalDataProvider):
 
 def main():
     print("=" * 70)
-    print("REAL MARKET BACKTEST")
+    print("REAL MARKET BACKTEST (Realistic Mode)")
     print("=" * 70)
     print(f"Backtest Period: {BACKTEST_START} → {BACKTEST_END}")
     print(f"Duration: {BACKTEST_END - BACKTEST_START}")
     print(f"Symbols: {', '.join(SYMBOLS)}")
+    print(f"Fee Rate (Taker): {FEE_RATE:.5f}")
+    print(f"Slippage Rate: {SLIPPAGE_RATE:.5f}")
     print()
 
     exchange = GateExchange()
@@ -213,6 +219,15 @@ def main():
     print(f"Profit Factor: {metrics.get('profit_factor', float('inf')):.2f}")
     print(f"Expectancy: {metrics.get('expectancy', 0.0):.4f} R")
     print(f"Average R: {metrics.get('average_r', 0.0):.4f}")
+    print(f"Gross PnL: {result.get('gross_pnl', 0.0):.2f} USDT")
+    print(f"Total Entry Fees: {result.get('total_entry_fees', 0.0):.2f}")
+    print(f"Total Exit Fees: {result.get('total_exit_fees', 0.0):.2f}")
+    print(f"Total Fees: {result.get('total_fees', 0.0):.2f}")
+    print(f"Entry Slippage: {result.get('total_entry_slippage', 0.0):.2f}")
+    print(f"Exit Slippage: {result.get('total_exit_slippage', 0.0):.2f}")
+    print(f"Total Slippage Cost: {result.get('total_slippage_cost', 0.0):.2f}")
+    print(f"Funding Cost: {result.get('total_funding_cost', 0.0):.2f}")
+    print(f"Total Execution Cost: {result.get('total_execution_cost', 0.0):.2f}")
     print(f"Net Profit: {metrics.get('net_profit', 0.0):.2f} USDT")
     print(f"Final Balance: {metrics.get('final_balance', INITIAL_BALANCE):.2f} USDT")
     print(f"Max Drawdown: {metrics.get('max_drawdown', 0.0)*100:.2f}%")
@@ -220,40 +235,6 @@ def main():
     print(f"Largest Loss: {metrics.get('largest_loss', 0.0):.2f}")
     print(f"Max Consecutive Wins: {metrics.get('max_consecutive_wins', 0)}")
     print(f"Max Consecutive Losses: {metrics.get('max_consecutive_losses', 0)}")
-
-    # نمایش جزئیات معاملات
-    trades = result.get("trades", [])
-    if trades:
-        print("\n" + "=" * 180)
-        print("TRADE DETAILS")
-        print("=" * 180)
-        print(
-            f"{'#':<4} {'Symbol':<18} {'Dir':<6} {'Entry Time':<20} {'Entry':>12} {'SL':>12} {'TP':>12} {'Size':>10} {'Risk':>8} {'Lev':>6} {'Exit Time':<20} {'Exit':>12} {'Reason':<6} {'PnL':>10} {'R':>7}"
-        )
-        print("-" * 180)
-        for i, t in enumerate(trades, 1):
-            entry_time = t.get("entry_time")
-            exit_time = t.get("exit_time")
-            entry_time_str = str(entry_time)[:19] if entry_time else "N/A"
-            exit_time_str = str(exit_time)[:19] if exit_time else "N/A"
-            print(
-                f"{i:<4} "
-                f"{t.get('symbol',''):<18} "
-                f"{t.get('direction',''):<6} "
-                f"{entry_time_str:<20} "
-                f"{t.get('entry_price',0):>12.2f} "
-                f"{t.get('stop_loss',0):>12.2f} "
-                f"{t.get('take_profit',0):>12.2f} "
-                f"{t.get('position_size',0):>10.6f} "
-                f"{t.get('risk_amount',0):>8.2f} "
-                f"{t.get('leverage',0):>6.2f} "
-                f"{exit_time_str:<20} "
-                f"{t.get('exit_price',0):>12.2f} "
-                f"{t.get('exit_reason',''):<6} "
-                f"{t.get('pnl',0):>10.2f} "
-                f"{t.get('r_multiple',0):>7.2f}"
-            )
-        print("=" * 180)
 
     print("\nبک‌تست کامل شد.")
 
