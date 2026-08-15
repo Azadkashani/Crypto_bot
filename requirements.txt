@@ -1,0 +1,4 @@
+# FTR Trading Bot — Runtime Dependencies
+# Generated: 2026-08-16
+
+requests>=2.31,<3
