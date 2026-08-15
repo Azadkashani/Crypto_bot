@@ -568,6 +568,7 @@ class OptimizedBacktestRunner:
             "entry_time": position.get("entry_time", exit_time),
             "signal_entry": signal_entry,
             "actual_entry": actual_entry,
+            "entry_price": actual_entry,       # برای سازگاری با تست‌ها
             "entry_slippage_cost": entry_slippage_cost,
             "entry_fee": entry_fee,
             "stop_loss": position["stop_loss"],
@@ -578,13 +579,14 @@ class OptimizedBacktestRunner:
             "exit_time": exit_time,
             "signal_exit": signal_exit,
             "actual_exit": actual_exit,
+            "exit_price": actual_exit,         # برای سازگاری با تست‌ها
             "exit_slippage_cost": exit_slippage_cost,
             "exit_fee": exit_fee,
             "funding_cost": funding_cost,
             "exit_reason": exit_reason,
             "gross_pnl": gross_pnl,
             "net_pnl": net_pnl,
-            "pnl": net_pnl,  # برای سازگاری با ماژول‌های دیگر
+            "pnl": net_pnl,                    # برای سازگاری با تست‌ها
             "r_multiple": r_multiple,
             "balance_after": self.current_balance,
             "score": position.get("score"),
