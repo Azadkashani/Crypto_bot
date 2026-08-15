@@ -156,16 +156,11 @@ class FailureAnalyzer:
         volume_sma_entry = df5[f"volume_sma_{config.VOLUME_SMA_PERIOD}"].iloc[idx_entry]
         close_entry = df5["close"].iloc[idx_entry]
 
-        def safe_min(arr, start, end):
-            if end < start or start < 0:
-                return np.nan
-            return arr[start:end].min()
-
         rsi_arr = df5[f"rsi_{config.RSI_PERIOD}"].to_numpy()
-        rsi_min_3 = safe_min(rsi_arr, max(0, idx_entry-2), idx_entry+1)
-        rsi_min_5 = safe_min(rsi_arr, max(0, idx_entry-4), idx_entry+1)
-        rsi_min_10 = safe_min(rsi_arr, max(0, idx_entry-9), idx_entry+1)
-        rsi_min_20 = safe_min(rsi_arr, max(0, idx_entry-19), idx_entry+1)
+        rsi_min_3 = rsi_arr[max(0, idx_entry-2):idx_entry+1].min() if idx_entry >= 0 else np.nan
+        rsi_min_5 = rsi_arr[max(0, idx_entry-4):idx_entry+1].min() if idx_entry >= 0 else np.nan
+        rsi_min_10 = rsi_arr[max(0, idx_entry-9):idx_entry+1].min() if idx_entry >= 0 else np.nan
+        rsi_min_20 = rsi_arr[max(0, idx_entry-19):idx_entry+1].min() if idx_entry >= 0 else np.nan
 
         if direction == "LONG":
             sl_dist_pct = (entry_price - sl) / entry_price
@@ -175,7 +170,6 @@ class FailureAnalyzer:
 
         volume_ratio = volume_entry / volume_sma_entry if volume_sma_entry else np.nan
 
-        # Support/Resistance
         lookback = max(0, idx_entry-50)
         window = df5.iloc[lookback:idx_entry+1]
         support = window["low"].min()
@@ -183,38 +177,28 @@ class FailureAnalyzer:
         distance_to_support = (entry_price - support) / entry_price if support else np.nan
         distance_to_resistance = (resistance - entry_price) / entry_price if resistance else np.nan
 
-        # CHOCH/BOS
-        bullish_choch = df5["bullish_choch"].iloc[:idx_entry+1]
-        bearish_choch = df5["bearish_choch"].iloc[:idx_entry+1]
-        bullish_bos = df5["bullish_bos"].iloc[:idx_entry+1]
-        bearish_bos = df5["bearish_bos"].iloc[:idx_entry+1]
-
+        # استخراج آخرین CHOCH/BOS با boolean mask
+        past = df5.iloc[:idx_entry+1]
         if direction == "LONG":
-            if bullish_choch.any():
-                last_choch = df5.index[bullish_choch[bullish_choch].index][-1]
-                candles_since_choch = idx_entry - df5.index.get_loc(last_choch)
-            else:
-                last_choch = None
-                candles_since_choch = None
-            if bullish_bos.any():
-                last_bos = df5.index[bullish_bos[bullish_bos].index][-1]
-                candles_since_bos = idx_entry - df5.index.get_loc(last_bos)
-            else:
-                last_bos = None
-                candles_since_bos = None
+            choch_times = past.index[past["bullish_choch"]]
+            bos_times = past.index[past["bullish_bos"]]
         else:
-            if bearish_choch.any():
-                last_choch = df5.index[bearish_choch[bearish_choch].index][-1]
-                candles_since_choch = idx_entry - df5.index.get_loc(last_choch)
-            else:
-                last_choch = None
-                candles_since_choch = None
-            if bearish_bos.any():
-                last_bos = df5.index[bearish_bos[bearish_bos].index][-1]
-                candles_since_bos = idx_entry - df5.index.get_loc(last_bos)
-            else:
-                last_bos = None
-                candles_since_bos = None
+            choch_times = past.index[past["bearish_choch"]]
+            bos_times = past.index[past["bearish_bos"]]
+
+        if len(choch_times) > 0:
+            last_choch = choch_times[-1]
+            candles_since_choch = idx_entry - past.index.get_loc(last_choch)
+        else:
+            last_choch = None
+            candles_since_choch = None
+
+        if len(bos_times) > 0:
+            last_bos = bos_times[-1]
+            candles_since_bos = idx_entry - past.index.get_loc(last_bos)
+        else:
+            last_bos = None
+            candles_since_bos = None
 
         # MAE / MFE
         if idx_exit is not None and idx_exit >= idx_entry:
@@ -237,15 +221,23 @@ class FailureAnalyzer:
         if idx_exit is not None and idx_exit < len(df5) - 1:
             future = df5.iloc[idx_exit+1:]
             if direction == "LONG":
-                post_sl_5 = (future["high"].iloc[:5].max() - entry_price) / entry_price if len(future) >= 5 else np.nan
-                post_sl_10 = (future["high"].iloc[:10].max() - entry_price) / entry_price if len(future) >= 10 else np.nan
-                post_sl_20 = (future["high"].iloc[:20].max() - entry_price) / entry_price if len(future) >= 20 else np.nan
-                post_sl_50 = (future["high"].iloc[:50].max() - entry_price) / entry_price if len(future) >= 50 else np.nan
+                if len(future) >= 5:
+                    post_sl_5 = (future["high"].iloc[:5].max() - entry_price) / entry_price
+                if len(future) >= 10:
+                    post_sl_10 = (future["high"].iloc[:10].max() - entry_price) / entry_price
+                if len(future) >= 20:
+                    post_sl_20 = (future["high"].iloc[:20].max() - entry_price) / entry_price
+                if len(future) >= 50:
+                    post_sl_50 = (future["high"].iloc[:50].max() - entry_price) / entry_price
             else:
-                post_sl_5 = (entry_price - future["low"].iloc[:5].min()) / entry_price if len(future) >= 5 else np.nan
-                post_sl_10 = (entry_price - future["low"].iloc[:10].min()) / entry_price if len(future) >= 10 else np.nan
-                post_sl_20 = (entry_price - future["low"].iloc[:20].min()) / entry_price if len(future) >= 20 else np.nan
-                post_sl_50 = (entry_price - future["low"].iloc[:50].min()) / entry_price if len(future) >= 50 else np.nan
+                if len(future) >= 5:
+                    post_sl_5 = (entry_price - future["low"].iloc[:5].min()) / entry_price
+                if len(future) >= 10:
+                    post_sl_10 = (entry_price - future["low"].iloc[:10].min()) / entry_price
+                if len(future) >= 20:
+                    post_sl_20 = (entry_price - future["low"].iloc[:20].min()) / entry_price
+                if len(future) >= 50:
+                    post_sl_50 = (entry_price - future["low"].iloc[:50].min()) / entry_price
 
         # Failure reasons
         reasons = []
