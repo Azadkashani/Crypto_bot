@@ -65,17 +65,6 @@ class ExecutionEngine:
         if self.config.mode != ExecutionMode.DRY_RUN:
             warnings.append(f"Mode is {self.config.mode.value} — no real execution in this phase")
         
-        # بررسی Risk Assessment معتبر
-        if not risk_assessment.is_valid:
-            errors.append("Risk assessment is invalid")
-            errors.extend([r.value for r in risk_assessment.rejection_reasons])
-            return ExecutionResult(
-                success=False,
-                errors=errors,
-                warnings=warnings,
-                mode=self.config.mode
-            )
-        
         # بررسی Duplicate
         if risk_assessment.signal_id in self._processed_signal_ids:
             errors.append(f"Duplicate signal_id: {risk_assessment.signal_id}")
@@ -133,6 +122,7 @@ class ExecutionEngine:
                 errors.append("SHORT: take_profit must be < entry_price")
         
         # بررسی Risk Consistency
+        # این بررسی قبل از is_valid انجام می‌شود تا inconsistency مشخص شود
         if risk_assessment.position_size > 0 and risk_assessment.entry_price > 0:
             expected_risk = risk_assessment.position_size * abs(
                 risk_assessment.entry_price - risk_assessment.stop_loss
@@ -148,6 +138,11 @@ class ExecutionEngine:
                         f"Risk inconsistency: expected={expected_risk:.6f}, "
                         f"actual={actual_risk:.6f}, deviation={deviation:.4f}"
                     )
+        
+        # بررسی Risk Assessment معتبر
+        if not risk_assessment.is_valid:
+            errors.append("Risk assessment is invalid")
+            errors.extend([r.value for r in risk_assessment.rejection_reasons])
         
         # اگر خطا وجود دارد
         if errors:
