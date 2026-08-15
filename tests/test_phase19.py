@@ -30,7 +30,6 @@ def test_symbol_whitelist_centralized():
 
 
 def test_paper_trading_disabled_real_order():
-    # اطمینان از اینکه PAPER_TRADING پیش‌فرض True است
     assert config.PAPER_TRADING is True
 
 
@@ -54,20 +53,15 @@ def test_duplicate_signal_guard():
     runner = LivePaperTradingRunner(exchange, ["BTC/USDT:USDT"])
     now = pd.Timestamp('2025-01-01 00:00:00', tz='UTC')
     runner.last_signal_timestamps["BTC/USDT:USDT"] = now
-    # در run_once، اگر last_signal_timestamps برابر current_time باشد، باید skip کند
-    # بنابراین run_once نباید signal تولید کند
-    # داده خالی باعث هیچ کاندیدا نمی‌شود، پس تست فقط ساختار
     assert runner.last_signal_timestamps["BTC/USDT:USDT"] == now
 
 
 def test_position_limit_enforced():
     exchange = FakeExchange()
     runner = LivePaperTradingRunner(exchange, ["BTC/USDT:USDT", "ETH/USDT:USDT"])
-    # پر کردن 4 پوزیشن
     for i in range(4):
         sym = f"SYM{i}/USDT:USDT"
         runner.open_positions[sym] = {"symbol": sym}
-    # تلاش برای باز کردن پنجمین
     candidate = {"symbol": "SYM5/USDT:USDT", "signal": "LONG", "score": 90,
                  "entry_price": 100, "stop_loss": 90, "take_profit": 120,
                  "position_size": 1, "risk_amount": 10, "leverage": 1}
@@ -85,14 +79,12 @@ def test_duplicate_symbol_rejected():
                  "position_size": 1, "risk_amount": 10, "leverage": 1}
     runner._open_paper_position(candidate, pd.Timestamp('2025-01-01 00:00:00', tz='UTC'))
     assert runner.open_positions["BTC/USDT:USDT"]["symbol"] == "BTC/USDT:USDT"
-    # فقط یکبار
     assert len(runner.open_positions) == 1
 
 
 def test_monitor_sl_first():
     exchange = FakeExchange()
     now = pd.Timestamp('2025-01-01 00:05:00', tz='UTC')
-    # ساخت یک کندل که هم SL و هم TP را لمس کند
     idx = pd.DatetimeIndex([pd.Timestamp('2025-01-01 00:05:00', tz='UTC')])
     df = pd.DataFrame({'open':[100], 'high':[111], 'low':[94], 'close':[100], 'volume':[10]}, index=idx)
     exchange.symbols[("BTC/USDT:USDT", '5m')] = df
@@ -117,3 +109,22 @@ def test_monitor_sl_first():
     assert trade["exit_reason"] == "SL"
     assert trade["exit_price"] == 95
     assert trade["pnl"] == -5.0
+
+
+def test_live_price_deviation_rejects_signal():
+    exchange = FakeExchange()
+    now = pd.Timestamp('2025-01-01 00:05:00', tz='UTC')
+    # داده 5m یک کندل با Close=100
+    idx = pd.DatetimeIndex([pd.Timestamp('2025-01-01 00:00:00', tz='UTC')])
+    df5 = pd.DataFrame({'open':[100], 'high':[101], 'low':[99], 'close':[100], 'volume':[10]}, index=idx)
+    exchange.symbols[("BTC/USDT:USDT", '5m')] = df5
+    exchange.symbols[("BTC/USDT:USDT", '1h')] = pd.DataFrame(columns=['open','high','low','close','volume'])
+    exchange.symbols[("BTC/USDT:USDT", '4h')] = pd.DataFrame(columns=['open','high','low','close','volume'])
+    # تیکر قیمت 105 (اختلاف 5%)
+    exchange.ticks["BTC/USDT:USDT"] = {"last": 105.0, "quote_volume": 5_000_000}
+
+    runner = LivePaperTradingRunner(exchange, ["BTC/USDT:USDT"])
+    # شبیه‌سازی یک سیکل
+    runner.run_once(current_time=now)
+    # نباید پوزیشنی باز شود
+    assert len(runner.open_positions) == 0
