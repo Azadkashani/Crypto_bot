@@ -1,9 +1,13 @@
 """
-Backtest Engine با دو کلاس:
-- OptimizedBacktestRunner (نسخه بهینه‌شده با پیش‌محاسبه)
-- BacktestEngine (رابط قدیمی برای سازگاری با تست‌های فاز ۱۰ و ۱۲)
+Backtest Engine با پشتیبانی چند پوزیشن همزمان و هزینه‌های واقعی معاملات.
 
-هیچ تغییر منطقی در استراتژی، Risk، Scoring یا SL/TP ایجاد نشده است.
+شامل:
+- Trading Fees (Entry/Exit) بر اساس Notional Value
+- Slippage برای ورود و خروج
+- Funding Fee فقط در صورت فعال بودن و داشتن داده تاریخی
+- حالت Zero-Cost با تنظیم fee_rate=0 و slippage_rate=0
+
+منطق استراتژی و سیگنال تغییر نکرده است.
 """
 
 from __future__ import annotations
@@ -52,7 +56,7 @@ class SimpleDataProvider:
 
 class OptimizedBacktestRunner:
     """
-    نسخهٔ بهینه‌شده با پیش‌محاسبه‌ی کامل اندیکاتورها.
+    نسخهٔ بهینه‌شده با پیش‌محاسبه‌ی کامل اندیکاتورها و هزینه‌های واقعی.
     """
 
     def __init__(
@@ -63,6 +67,7 @@ class OptimizedBacktestRunner:
         fee_rate: float = 0.0,
         slippage_rate: float = 0.0,
         max_positions: Optional[int] = None,
+        enable_funding: bool = False,
     ):
         self.provider = provider
         self.symbols = symbols
@@ -70,6 +75,7 @@ class OptimizedBacktestRunner:
         self.current_balance = float(self.initial_balance)
         self.fee_rate = fee_rate
         self.slippage_rate = slippage_rate
+        self.enable_funding = enable_funding
         self.max_positions = max_positions or config.MAX_CONCURRENT_POSITIONS
         self.trades: List[Dict[str, Any]] = []
         self.open_positions: Dict[str, Dict[str, Any]] = {}
@@ -401,16 +407,18 @@ class OptimizedBacktestRunner:
                 size = best.get("position_size")
                 risk = best.get("risk_amount")
 
+                # اعمال slippage برای ورود
                 if best["signal"] == "LONG":
-                    fill_price = entry * (1 + self.slippage_rate)
+                    actual_entry = entry * (1 + self.slippage_rate)
                 else:
-                    fill_price = entry * (1 - self.slippage_rate)
+                    actual_entry = entry * (1 - self.slippage_rate)
 
                 self.open_positions[best["symbol"]] = {
                     "symbol": best["symbol"],
                     "direction": best["signal"],
                     "entry_time": decision_time,
-                    "entry_price": float(fill_price),
+                    "signal_entry": float(entry),          # قیمت سیگنال
+                    "entry_price": float(actual_entry),   # قیمت اجرای واقعی با slippage
                     "stop_loss": float(sl),
                     "take_profit": float(tp),
                     "position_size": float(size),
@@ -514,37 +522,69 @@ class OptimizedBacktestRunner:
 
     def _close_position(self, position, exit_price, exit_reason, exit_time):
         direction = position["direction"]
-        entry = position["entry_price"]
         size = position["position_size"]
         risk = position["risk_amount"]
 
+        signal_entry = position.get("signal_entry", position.get("entry_price", 0.0))
+        actual_entry = position.get("entry_price", signal_entry)
+        signal_exit = exit_price
+
+        # اعمال slippage خروج
         if direction == "LONG":
-            pnl = (exit_price - entry) * size
+            actual_exit = signal_exit * (1 - self.slippage_rate)
+            entry_slippage_cost = (actual_entry - signal_entry) * size
+            exit_slippage_cost = (signal_exit - actual_exit) * size
+            signal_gross = (signal_exit - signal_entry) * size
         else:
-            pnl = (entry - exit_price) * size
+            actual_exit = signal_exit * (1 + self.slippage_rate)
+            entry_slippage_cost = (signal_entry - actual_entry) * size
+            exit_slippage_cost = (actual_exit - signal_exit) * size
+            signal_gross = (signal_entry - signal_exit) * size
 
-        fee = self.fee_rate * abs(pnl) if pnl > 0 else 0.0
-        pnl -= fee
+        # کارمزدها بر اساس Notional واقعی
+        entry_notional = actual_entry * size
+        exit_notional = actual_exit * size
+        entry_fee = entry_notional * self.fee_rate
+        exit_fee = exit_notional * self.fee_rate
 
-        r_multiple = pnl / risk if risk else 0.0
-        self.current_balance += pnl
+        funding_cost = position.get("funding_cost", 0.0)
+
+        gross_pnl = signal_gross
+        net_pnl = (
+            signal_gross
+            - entry_slippage_cost
+            - exit_slippage_cost
+            - entry_fee
+            - exit_fee
+            - funding_cost
+        )
+
+        r_multiple = net_pnl / risk if risk else 0.0
+        self.current_balance += net_pnl
 
         self.trades.append({
             "symbol": position["symbol"],
             "direction": direction,
             "entry_time": position.get("entry_time", exit_time),
-            "entry_price": entry,
+            "signal_entry": signal_entry,
+            "actual_entry": actual_entry,
+            "entry_slippage_cost": entry_slippage_cost,
+            "entry_fee": entry_fee,
             "stop_loss": position["stop_loss"],
             "take_profit": position["take_profit"],
             "position_size": size,
             "risk_amount": risk,
             "leverage": position.get("leverage", 0.0),
-            "margin_allocation": position.get("margin_allocation", 0.0),
-            "notional_position_value": position.get("notional_position_value", 0.0),
             "exit_time": exit_time,
-            "exit_price": exit_price,
+            "signal_exit": signal_exit,
+            "actual_exit": actual_exit,
+            "exit_slippage_cost": exit_slippage_cost,
+            "exit_fee": exit_fee,
+            "funding_cost": funding_cost,
             "exit_reason": exit_reason,
-            "pnl": pnl,
+            "gross_pnl": gross_pnl,
+            "net_pnl": net_pnl,
+            "pnl": net_pnl,  # برای سازگاری با ماژول‌های دیگر
             "r_multiple": r_multiple,
             "balance_after": self.current_balance,
             "score": position.get("score"),
@@ -558,27 +598,54 @@ class OptimizedBacktestRunner:
             equity_curve=self.equity_curve,
             initial_balance=self.initial_balance,
         )
+
+        total_entry_fees = sum(t.get("entry_fee", 0.0) for t in self.trades)
+        total_exit_fees = sum(t.get("exit_fee", 0.0) for t in self.trades)
+        total_fees = total_entry_fees + total_exit_fees
+
+        total_entry_slippage = sum(t.get("entry_slippage_cost", 0.0) for t in self.trades)
+        total_exit_slippage = sum(t.get("exit_slippage_cost", 0.0) for t in self.trades)
+        total_slippage_cost = total_entry_slippage + total_exit_slippage
+
+        total_funding_cost = sum(t.get("funding_cost", 0.0) for t in self.trades)
+        total_execution_cost = total_fees + total_slippage_cost + total_funding_cost
+
+        gross_pnl = sum(t.get("gross_pnl", 0.0) for t in self.trades)
+        net_pnl = sum(t.get("net_pnl", 0.0) for t in self.trades)
+
         long_trades = [t for t in self.trades if t["direction"] == "LONG"]
         short_trades = [t for t in self.trades if t["direction"] == "SHORT"]
 
         def _m(trades):
             if not trades:
-                return {"trades":0,"win_rate":0.0,"net_profit":0.0,"profit_factor":float("inf"),"average_r":0.0}
+                return {
+                    "trades": 0,
+                    "win_rate": 0.0,
+                    "net_profit": 0.0,
+                    "profit_factor": float("inf"),
+                    "average_r": 0.0,
+                }
             m = calculate_metrics(trades, [], initial_balance=None)
-            return {"trades":m["total_trades"],"win_rate":m["win_rate"],"net_profit":m["net_profit"],"profit_factor":m["profit_factor"],"average_r":m["average_r"]}
+            return {
+                "trades": m["total_trades"],
+                "win_rate": m["win_rate"],
+                "net_profit": m["net_profit"],
+                "profit_factor": m["profit_factor"],
+                "average_r": m["average_r"],
+            }
 
         symbol_metrics = {}
         for sym in self.symbols:
-            symbol_metrics[sym] = _m([t for t in self.trades if t["symbol"]==sym])
+            symbol_metrics[sym] = _m([t for t in self.trades if t["symbol"] == sym])
 
         regime_metrics = {}
-        for r in ["BULLISH","BEARISH","RANGE"]:
+        for r in ["BULLISH", "BEARISH", "RANGE"]:
             if r == "BULLISH":
-                rt = [t for t in self.trades if t["regime_4h"]=="BULLISH" and t["regime_1h"]=="BULLISH"]
+                rt = [t for t in self.trades if t["regime_4h"] == "BULLISH" and t["regime_1h"] == "BULLISH"]
             elif r == "BEARISH":
-                rt = [t for t in self.trades if t["regime_4h"]=="BEARISH" and t["regime_1h"]=="BEARISH"]
+                rt = [t for t in self.trades if t["regime_4h"] == "BEARISH" and t["regime_1h"] == "BEARISH"]
             else:
-                rt = [t for t in self.trades if not ((t["regime_4h"]=="BULLISH" and t["regime_1h"]=="BULLISH") or (t["regime_4h"]=="BEARISH" and t["regime_1h"]=="BEARISH"))]
+                rt = [t for t in self.trades if not ((t["regime_4h"] == "BULLISH" and t["regime_1h"] == "BULLISH") or (t["regime_4h"] == "BEARISH" and t["regime_1h"] == "BEARISH"))]
             regime_metrics[r] = _m(rt)
 
         period_metrics = {}
@@ -594,6 +661,15 @@ class OptimizedBacktestRunner:
             "initial_balance": self.initial_balance,
             "final_balance": metrics["final_balance"],
             "net_profit": metrics["net_profit"],
+            "gross_pnl": gross_pnl,
+            "total_entry_fees": total_entry_fees,
+            "total_exit_fees": total_exit_fees,
+            "total_fees": total_fees,
+            "total_entry_slippage": total_entry_slippage,
+            "total_exit_slippage": total_exit_slippage,
+            "total_slippage_cost": total_slippage_cost,
+            "total_funding_cost": total_funding_cost,
+            "total_execution_cost": total_execution_cost,
             "total_trades": metrics["total_trades"],
             "winning_trades": metrics["winning_trades"],
             "losing_trades": metrics["losing_trades"],
