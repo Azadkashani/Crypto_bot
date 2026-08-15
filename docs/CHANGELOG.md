@@ -2,7 +2,7 @@ FILE: docs/CHANGELOG.md
 
 # FTR Crypto Trading Bot — گزارش تغییرات و پیشرفت پروژه
 
-## نسخه: 1.3
+## نسخه: 1.4
 ## آخرین به‌روزرسانی: 16 آگوست 2026
 ## وضعیت: فعال
 
@@ -88,158 +88,43 @@ FILE: docs/CHANGELOG.md
 
 ---
 
-## مرحله ۳: رفع خطای Import
+## مرحله ۳: رفع خطاهای Phase 1
 
 | مورد | مقدار |
 |------|-------|
-| **تاریخ** | 15 آگوست 2026 |
+| **تاریخ** | 15-16 آگوست 2026 |
 | **فاز** | Phase 1 Debug |
-| **عنوان** | Import Fix — MarketStructureState |
+| **عنوان** | Import Fixes & Core Debugging |
 | **وضعیت** | ✅ تکمیل‌شده |
 
 ### خلاصه
 
-خطای `NameError: name 'MarketStructureState' is not defined` برطرف شد. import مربوطه به `ftr_types.py` اضافه شد.
+خطاهای زیر برطرف شدند:
+
+- `NameError: MarketStructureState is not defined` — اصلاح import
+- `TypeError: MarketStructureState.__init__()` — اصلاح سازنده
+- `AttributeError: 'NoneType' object has no attribute 'end_index'` — بررسی None بودن base
+- `is_consumed` Lifecycle — سطح فقط پس از ساخت موفق Zone مصرف می‌شود
+- Duplicate Break Registration — جلوگیری از ثبت تکراری
+- Zone Creation Candle ≠ FTB — جلوگیری از FTB در کندل ساخت
 
 ### فایل‌های اصلاح‌شده
 
 - `src/strategy/types/ftr_types.py`
 - `src/strategy/types/market_structure.py`
-
----
-
-## مرحله ۴: رفع خطای ساختار بازار
-
-| مورد | مقدار |
-|------|-------|
-| **تاریخ** | 15 آگوست 2026 |
-| **فاز** | Phase 1 Debug |
-| **عنوان** | StructureAnalyzer Fix |
-| **وضعیت** | ✅ تکمیل‌شده |
-
-### خلاصه
-
-خطای `TypeError: MarketStructureState.__init__() missing 1 required positional argument` برطرف شد.
-
-### فایل‌های اصلاح‌شده
-
 - `src/strategy/market_structure/structure_analyzer.py`
-
----
-
-## مرحله ۵: رفع خطای FTB Detector
-
-| مورد | مقدار |
-|------|-------|
-| **تاریخ** | 15 آگوست 2026 |
-| **فاز** | Phase 1 Debug |
-| **عنوان** | FTB Detector Fix — NoneType base |
-| **وضعیت** | ✅ تکمیل‌شده |
-
-### خلاصه
-
-خطای `AttributeError: 'NoneType' object has no attribute 'end_index'` برطرف شد. بررسی `zone.base is not None` اضافه شد.
-
-### فایل‌های اصلاح‌شده
-
 - `src/strategy/ftr/ftb_detector.py`
-
----
-
-## مرحله ۶: رفع Bug اصلی — is_consumed Lifecycle
-
-| مورد | مقدار |
-|------|-------|
-| **تاریخ** | 16 آگوست 2026 |
-| **فاز** | Phase 1 Root-Cause Fix |
-| **عنوان** | StructureBreak / Level Consumption Lifecycle |
-| **وضعیت** | ✅ تکمیل‌شده |
-
-### خلاصه
-
-Root Cause اصلی پیدا و اصلاح شد:
-
-- `StructureAnalyzer._register_break` دیگر `level.is_consumed = True` نمی‌کند
-- سطح فقط پس از ساخت موفق FTR Zone در `FTREngine` مصرف می‌شود
-- `FTREngine` از `get_recent_breaks()` به جای `BreakoutDetector` مستقل استفاده می‌کند
-
-### فایل‌های اصلاح‌شده
-
-- `src/strategy/market_structure/structure_analyzer.py`
 - `src/strategy/ftr/ftr_engine.py`
 
 ---
 
-## مرحله ۷: رفع Look-ahead Bias
-
-| مورد | مقدار |
-|------|-------|
-| **تاریخ** | 16 آگوست 2026 |
-| **فاز** | Phase 1 Root-Cause Fix |
-| **عنوان** | Look-ahead Prevention — Historical Break Reprocessing |
-| **وضعیت** | ✅ تکمیل‌شده |
-
-### خلاصه
-
-مشکل پردازش مجدد Breakهای تاریخی با داده‌های آینده برطرف شد:
-
-- `visible_ohlcv` برای تمام Detectorها استفاده می‌شود
-- فقط Breakهای با `break_timestamp <= current_timestamp` پردازش می‌شوند
-- Break ناقص در `_pending_breaks` باقی می‌ماند
-- `_processed_breaks` برای جلوگیری از پردازش تکراری
-
-### فایل‌های اصلاح‌شده
-
-- `src/strategy/ftr/ftr_engine.py`
-- `src/strategy/market_structure/structure_analyzer.py`
-
----
-
-## مرحله ۸: رفع Duplicate Break Registration
-
-| مورد | مقدار |
-|------|-------|
-| **تاریخ** | 16 آگوست 2026 |
-| **فاز** | Phase 2.1 |
-| **عنوان** | Duplicate Break Prevention |
-| **وضعیت** | ✅ تکمیل‌شده |
-
-### خلاصه
-
-مشکل ثبت تکراری Break برای سطوح قدیمی‌تر برطرف شد. `_registered_break_keys` در `StructureAnalyzer` اضافه شد.
-
-### فایل‌های اصلاح‌شده
-
-- `src/strategy/market_structure/structure_analyzer.py`
-
----
-
-## مرحله ۹: FTB Lifecycle Validation
-
-| مورد | مقدار |
-|------|-------|
-| **تاریخ** | 16 آگوست 2026 |
-| **فاز** | Phase 2 |
-| **عنوان** | FTB / First-Touch Lifecycle |
-| **وضعیت** | ✅ تکمیل‌شده |
-
-### خلاصه
-
-Zone creation candle دیگر به عنوان FTB candidate در نظر گرفته نمی‌شود.
-
-### فایل‌های اصلاح‌شده
-
-- `src/strategy/ftr/ftr_engine.py`
-
----
-
-## مرحله ۱۰: Signal Quality Layer
+## مرحله ۴: Signal Quality Layer
 
 | مورد | مقدار |
 |------|-------|
 | **تاریخ** | 16 آگوست 2026 |
 | **فاز** | Phase 4 |
-| **عنوان** | Signal Quality & Confluence Layer |
+| **عنوان** | Signal Quality & Confluence |
 | **وضعیت** | ✅ تکمیل‌شده |
 
 ### خلاصه
@@ -249,6 +134,7 @@ Zone creation candle دیگر به عنوان FTB candidate در نظر گرفت
 - `SignalQualityEngine` با امتیازدهی به Structure، Displacement، Base، Zone، FTB و Trend
 - طبقه‌بندی QUALIFIED / WATCH / REJECTED
 - توضیح‌پذیری از طریق positive_factors و warning_factors
+- رفع Bug محاسبه penetration ratio
 
 ### فایل‌های ایجاد شده
 
@@ -259,26 +145,7 @@ Zone creation candle دیگر به عنوان FTB candidate در نظر گرفت
 
 ---
 
-## مرحله ۱۱: رفع FTB Penetration Scoring
-
-| مورد | مقدار |
-|------|-------|
-| **تاریخ** | 16 آگوست 2026 |
-| **فاز** | Phase 4.1 |
-| **عنوان** | FTB Penetration Scoring Fix |
-| **وضعیت** | ✅ تکمیل‌شده |
-
-### خلاصه
-
-تابع `_calculate_ftb_penetration_ratio` برای محاسبه صحیح عمق نفوذ از سمت صحیح Zone اضافه شد.
-
-### فایل‌های اصلاح‌شده
-
-- `src/strategy/signal/signal_quality_engine.py`
-
----
-
-## مرحله ۱۲: Trade Signal Layer
+## مرحله ۵: Trade Signal Layer
 
 | مورد | مقدار |
 |------|-------|
@@ -306,7 +173,7 @@ Trade Signal Layer ایجاد شد:
 
 ---
 
-## مرحله ۱۳: Risk Management Layer
+## مرحله ۶: Risk Management Layer
 
 | مورد | مقدار |
 |------|-------|
@@ -333,6 +200,89 @@ Risk Management Layer ایجاد شد:
 
 ---
 
+## مرحله ۷: Execution Layer
+
+| مورد | مقدار |
+|------|-------|
+| **تاریخ** | 16 آگوست 2026 |
+| **فاز** | Phase 5.3 |
+| **عنوان** | Execution Layer + Risk Consistency Fix |
+| **وضعیت** | ✅ تکمیل‌شده |
+
+### خلاصه
+
+Execution Layer ایجاد شد:
+
+- `ExecutionEngine` ساخت و اعتبارسنجی سفارش
+- بررسی Risk Consistency
+- جلوگیری از Duplicate
+- حالت DRY_RUN بدون اتصال به Exchange
+- رفع Bug ترتیب اعتبارسنجی (Risk Consistency قبل از is_valid)
+
+### فایل‌های ایجاد شده
+
+- `src/strategy/execution/__init__.py`
+- `src/strategy/execution/execution_types.py`
+- `src/strategy/execution/execution_engine.py`
+- `tests/unit/test_execution.py`
+
+---
+
+## مرحله ۸: Backtest Layer
+
+| مورد | مقدار |
+|------|-------|
+| **تاریخ** | 16 آگوست 2026 |
+| **فاز** | Phase 5.4 |
+| **عنوان** | Backtest & Simulation |
+| **وضعیت** | ✅ تکمیل‌شده |
+
+### خلاصه
+
+Backtest Engine ایجاد شد:
+
+- پردازش رویداد-محور کندل به کندل
+- مدیریت پوزیشن و خروج SL/TP
+- سیاست SL_FIRST برای کندل همزمان
+- محاسبه PnL و Equity
+- متریک‌های عملکرد
+
+### فایل‌های ایجاد شده
+
+- `src/strategy/backtest/__init__.py`
+- `src/strategy/backtest/backtest_types.py`
+- `src/strategy/backtest/backtest_engine.py`
+- `tests/unit/test_backtest.py`
+
+---
+
+## مرحله ۹: Pipeline Integration
+
+| مورد | مقدار |
+|------|-------|
+| **تاریخ** | 16 آگوست 2026 |
+| **فاز** | Phase 5.5 |
+| **عنوان** | Strategy Pipeline |
+| **وضعیت** | ✅ تکمیل‌شده |
+
+### خلاصه
+
+Strategy Pipeline به عنوان Coordinator ایجاد شد:
+
+- اتصال FTR → Signal Quality → Trade → Risk → Execution
+- فیلتر QUALIFIED/WATCH/REJECTED
+- مدیریت Duplicate
+- بدون Look-ahead
+
+### فایل‌های ایجاد شده
+
+- `src/strategy/pipeline/__init__.py`
+- `src/strategy/pipeline/pipeline_types.py`
+- `src/strategy/pipeline/strategy_pipeline.py`
+- `tests/unit/test_strategy_pipeline.py`
+
+---
+
 ## خلاصه پیشرفت
 
 ### وضعیت فازها
@@ -345,20 +295,23 @@ Risk Management Layer ایجاد شد:
 | Phase 4 | Signal Quality | ✅ تکمیل |
 | Phase 5.1 | Trade Signal | ✅ تکمیل |
 | Phase 5.2 | Risk Management | ✅ تکمیل |
-| Phase 6 | Execution | ⏳ آینده |
-| Phase 7 | Exchange Integration | ⏳ آینده |
+| Phase 5.3 | Execution | ✅ تکمیل |
+| Phase 5.4 | Backtest | ✅ تکمیل |
+| Phase 5.5 | Pipeline Integration | ✅ تکمیل |
+| Phase 6 | Exchange Integration | ⏳ آینده |
+| Phase 7 | Live Trading | ⏳ آینده |
 
 ### آمار
 
 | مورد | تعداد |
 |------|-------|
-| فایل‌های Production | 20 |
-| فایل‌های تست | 7 |
-| تعداد تست‌ها | 48 |
-| وضعیت تست‌ها | ✅ 48 passed / 0 failed |
+| فایل‌های Production | 30+ |
+| فایل‌های تست | 12 |
+| تعداد تست‌ها | 82 |
+| وضعیت تست‌ها | ✅ 82 passed / 0 failed |
 
 ---
 
 ## پایان گزارش
 
-**نسخه: 1.3 — آخرین به‌روزرسانی: 16 آگوست 2026**
+**نسخه: 1.4 — آخرین به‌روزرسانی: 16 آگوست 2026**
