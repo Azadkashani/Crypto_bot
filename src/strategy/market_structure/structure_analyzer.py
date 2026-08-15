@@ -150,4 +150,170 @@ class StructureAnalyzer:
         self._create_levels_from_swings(swing_lows, "SUPPORT")
     
     def _create_levels_from_swings(self, swings: List[SwingPoint], level_type: str):
-        """ایجاد سط
+        """ایجاد سطوح از Swingهای مشابه"""
+        if len(swings) < self.config.min_level_strength:
+            return
+        
+        grouped = self._group_swings_by_price(swings)
+        
+        for price_level, swing_group in grouped.items():
+            if len(swing_group) >= self.config.min_level_strength:
+                existing_level = self._find_existing_level(price_level, level_type)
+                
+                if existing_level:
+                    existing_level.touch_count += len(swing_group)
+                    existing_level.strength_score = len(swing_group)
+                else:
+                    level = StructureLevel(
+                        price=price_level,
+                        level_type=level_type,
+                        created_timestamp=swing_group[0].timestamp,
+                        touch_count=len(swing_group),
+                        strength_score=len(swing_group),
+                        reference_swings=swing_group.copy()
+                    )
+                    self._structure_levels.append(level)
+    
+    def _group_swings_by_price(self, swings: List[SwingPoint]) -> Dict[float, List[SwingPoint]]:
+        """گروه‌بندی Swingها بر اساس نزدیکی قیمت"""
+        grouped = {}
+        tolerance = self.config.level_tolerance_pct
+        
+        for swing in swings:
+            found_group = False
+            
+            for price_level in list(grouped.keys()):
+                if abs(swing.price - price_level) / price_level <= tolerance:
+                    grouped[price_level].append(swing)
+                    found_group = True
+                    break
+            
+            if not found_group:
+                grouped[swing.price] = [swing]
+        
+        return grouped
+    
+    def _find_existing_level(self, price: float, level_type: str) -> Optional[StructureLevel]:
+        """جستجوی سطح موجود مشابه"""
+        tolerance = self.config.level_tolerance_pct
+        
+        for level in self._structure_levels:
+            if level.level_type == level_type:
+                if abs(price - level.price) / level.price <= tolerance:
+                    return level
+        
+        return None
+    
+    def _check_breaks(self, ohlcv_data: List[dict], current_index: int):
+        """بررسی شکست‌های ساختاری — شامل کندل‌های قبلی برای تأیید"""
+        if not self._structure_levels or current_index < 1:
+            return
+        
+        validation_candles = self.config.break_validation_candles
+        
+        # بررسی کندل‌های قبلی تا جایی که داده تأیید کافی دارند
+        start_check = max(0, current_index - validation_candles)
+        
+        for check_index in range(start_check, current_index + 1):
+            if check_index < 0:
+                continue
+            
+            current_close = ohlcv_data[check_index]['close']
+            
+            for level in self._structure_levels:
+                if level.is_consumed:
+                    continue
+                
+                if level.level_type in ["RESISTANCE", "SUPPLY"]:
+                    if current_close > level.price:
+                        break_distance = (current_close - level.price) / level.price
+                        
+                        if break_distance >= self.config.min_break_distance_pct:
+                            if self._validate_break(ohlcv_data, check_index, level, "LONG"):
+                                self._register_break(
+                                    level, "LONG", current_close,
+                                    ohlcv_data[check_index]['timestamp']
+                                )
+                                level.is_consumed = False  # سطح فعلاً مصرف نمی‌شود
+                
+                elif level.level_type in ["SUPPORT", "DEMAND"]:
+                    if current_close < level.price:
+                        break_distance = (level.price - current_close) / level.price
+                        
+                        if break_distance >= self.config.min_break_distance_pct:
+                            if self._validate_break(ohlcv_data, check_index, level, "SHORT"):
+                                self._register_break(
+                                    level, "SHORT", current_close,
+                                    ohlcv_data[check_index]['timestamp']
+                                )
+                                level.is_consumed = False
+    
+    def _validate_break(self, ohlcv_data: List[dict], break_index: int, 
+                        level: StructureLevel, direction: str) -> bool:
+        """اعتبارسنجی شکست با کندل‌های بعدی"""
+        validation_candles = self.config.break_validation_candles
+        
+        if break_index + validation_candles >= len(ohlcv_data):
+            return False
+        
+        for i in range(break_index + 1, break_index + 1 + validation_candles):
+            close = ohlcv_data[i]['close']
+            
+            if direction == "LONG":
+                if close <= level.price:
+                    return False
+            else:
+                if close >= level.price:
+                    return False
+        
+        return True
+    
+    def _register_break(self, level: StructureLevel, direction: str, 
+                       break_price: float, break_timestamp: int):
+        """ثبت شکست ساختاری — سطح مصرف نمی‌شود"""
+        break_type = self._determine_break_type(direction)
+        
+        structure_break = StructureBreak(
+            break_type=break_type,
+            break_price=break_price,
+            break_timestamp=break_timestamp,
+            broken_level=level,
+            direction=direction,
+            is_valid=True,
+            validation_timestamp=break_timestamp,
+            break_strength=1.0
+        )
+        
+        self._recent_breaks.append(structure_break)
+        self._last_break = structure_break
+        level.last_touched_timestamp = break_timestamp
+        # NOTE: is_consumed = True حذف شد
+        # سطح فقط پس از ساخت موفق FTR Zone در FTREngine مصرف می‌شود
+    
+    def _determine_break_type(self, direction: str) -> BreakType:
+        """تعیین نوع شکست"""
+        if self._structure_type == StructureType.BULLISH and direction == "LONG":
+            return BreakType.BOS
+        elif self._structure_type == StructureType.BEARISH and direction == "SHORT":
+            return BreakType.BOS
+        else:
+            return BreakType.CHOCH
+    
+    def _get_last_swing(self, swing_type: SwingType) -> Optional[SwingPoint]:
+        """دریافت آخرین Swing از نوع مشخص"""
+        for swing in reversed(self._all_swings):
+            if swing.swing_type == swing_type:
+                return swing
+        return None
+    
+    def _get_previous_swing(self, swing_type: SwingType) -> Optional[SwingPoint]:
+        """دریافت Swing قبلی از نوع مشخص"""
+        found_first = False
+        
+        for swing in reversed(self._all_swings):
+            if swing.swing_type == swing_type:
+                if found_first:
+                    return swing
+                found_first = True
+        
+        return None
