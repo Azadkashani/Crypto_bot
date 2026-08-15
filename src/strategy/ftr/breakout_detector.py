@@ -7,7 +7,6 @@
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
 from ..types.market_structure import StructureLevel, StructureBreak, BreakType
-from ..types.ftr_types import DisplacementData
 
 
 @dataclass
@@ -15,7 +14,7 @@ class BreakoutDetectorConfig:
     """پیکربندی تشخیص شکست"""
     break_method: str = "close"  # "close" یا "wick"
     min_break_distance_pct: float = 0.001  # حداقل فاصله شکست (0.1%)
-    min_break_strength: float = 0.5  # حداقل قدرت شکست
+    min_break_strength: float = 0.3  # حداقل قدرت شکست
     use_volume_confirmation: bool = False  # استفاده از حجم (اختیاری)
     min_volume_ratio: float = 1.5  # حداقل نسبت حجم
     confirmation_candles: int = 1  # تعداد کندل تأیید
@@ -41,12 +40,10 @@ class BreakoutDetector:
     
     def __init__(self, config: Optional[BreakoutDetectorConfig] = None):
         self.config = config or BreakoutDetectorConfig()
-        self._pending_breaks: List[Dict[str, Any]] = []
         self._confirmed_breaks: List[Dict[str, Any]] = []
     
     def reset(self):
         """بازنشانی وضعیت"""
-        self._pending_breaks.clear()
         self._confirmed_breaks.clear()
     
     def detect_breakout(self, ohlcv_data: List[dict], current_index: int,
@@ -119,7 +116,7 @@ class BreakoutDetector:
                           level: StructureLevel, direction: str) -> Dict[str, Any]:
         """ایجاد اطلاعات شکست"""
         break_candle = ohlcv_data[break_index]
-        break_price = break_candle['close'] if direction == "LONG" else break_candle['close']
+        break_price = break_candle['close']
         
         # محاسبه فاصله شکست
         if direction == "LONG":
@@ -165,17 +162,6 @@ class BreakoutDetector:
                 if direction == "LONG" and close <= level_price:
                     return False
                 elif direction == "SHORT" and close >= level_price:
-                    return False
-        
-        # بررسی حجم (اختیاری)
-        if self.config.use_volume_confirmation and 'volume' in ohlcv_data[break_index]:
-            # محاسبه میانگین حجم
-            volumes = [c.get('volume', 0) for c in ohlcv_data[max(0, break_index-20):break_index]]
-            avg_volume = sum(volumes) / len(volumes) if volumes else 0
-            
-            if avg_volume > 0:
-                volume_ratio = ohlcv_data[break_index]['volume'] / avg_volume
-                if volume_ratio < self.config.min_volume_ratio:
                     return False
         
         return True
