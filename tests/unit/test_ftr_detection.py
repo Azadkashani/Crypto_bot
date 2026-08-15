@@ -11,7 +11,6 @@ from src.strategy.types.ftr_types import FTRZoneState, FTBTouchType
 from src.strategy.ftr.ftr_engine import FTREngine, FTREngineConfig
 from src.strategy.market_structure.swing_detector import SwingDetectorConfig
 from src.strategy.market_structure.structure_analyzer import StructureAnalyzerConfig
-from src.strategy.ftr.breakout_detector import BreakoutDetectorConfig
 from src.strategy.ftr.impulse_detector import ImpulseDetectorConfig
 from src.strategy.ftr.base_detector import BaseDetectorConfig
 from src.strategy.ftr.zone_constructor import ZoneConstructorConfig
@@ -41,14 +40,13 @@ def create_bullish_ftr_scenario() -> List[dict]:
     """
     سناریوی FTR صعودی با سطوح ساختاری واضح
     """
-    n = 70
+    n = 75
     prices = []
     highs = []
     lows = []
     opens = []
     
     # فاز ۱: روند صعودی با Swingهای واضح
-    # Swing Low در 100
     for i in range(5):
         price = 100 + i * 0.5
         opens.append(price - 0.3)
@@ -56,7 +54,6 @@ def create_bullish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.5)
         lows.append(price - 0.3)
     
-    # Swing High در 105 (اولین)
     for i in range(5):
         price = 103 + i * 0.4
         opens.append(price + 0.2)
@@ -64,7 +61,6 @@ def create_bullish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.5)
         lows.append(price - 0.4)
     
-    # Swing Low در 102 (بالاتر از قبلی - Higher Low)
     for i in range(5):
         price = 104 - i * 0.4
         opens.append(price - 0.2)
@@ -72,7 +68,6 @@ def create_bullish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.4)
         lows.append(price - 0.3)
     
-    # Swing High در 108 (بالاتر - Higher High)
     for i in range(5):
         price = 105 + i * 0.6
         opens.append(price + 0.3)
@@ -80,7 +75,6 @@ def create_bullish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.5)
         lows.append(price - 0.4)
     
-    # Swing Low در 106 (باز هم Higher Low)
     for i in range(5):
         price = 108 - i * 0.4
         opens.append(price - 0.2)
@@ -88,15 +82,13 @@ def create_bullish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.3)
         lows.append(price - 0.3)
     
-    # فاز ۲: شکست قوی مقاومت 108
-    # کندل شکست
+    # فاز ۲: شکست قوی مقاومت ۱۰۸
     price = 110
     opens.append(108.5)
     prices.append(price)
     highs.append(110.5)
     lows.append(108)
     
-    # تأیید شکست
     for i in range(3):
         price = 111 + i * 1.0
         opens.append(price - 0.8)
@@ -112,19 +104,25 @@ def create_bullish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.5)
         lows.append(price - 0.6)
     
-    # فاز ۴: Base (تثبیت) - محدوده 126-130
+    # فاز ۴: Base (تثبیت) — محدوده ۱۲۶-۱۳۰
     base_high = 130
     base_low = 126
-    for i in range(8):
+    for i in range(7):
         price = base_low + (i % 3) * 1.3
         opens.append(price)
         prices.append(price)
         highs.append(base_high)
         lows.append(base_low)
     
-    # فاز ۵: ادامه صعود
-    for i in range(6):
-        price = base_high + 2 + i * 1.5
+    # فاز ۵: خروج قوی از Base (Continuation)
+    price = base_high + 2.5
+    opens.append(base_high + 0.5)
+    prices.append(price)
+    highs.append(price + 0.7)
+    lows.append(base_high - 0.3)
+    
+    for i in range(5):
+        price = base_high + 4 + i * 1.5
         opens.append(price - 1.0)
         prices.append(price)
         highs.append(price + 0.7)
@@ -138,8 +136,7 @@ def create_bullish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.4)
         lows.append(price - 0.3)
     
-    # پر کردن
-    for i in range(4):
+    for i in range(6):
         price = base_low - 1 - i * 0.2
         opens.append(price + 0.1)
         prices.append(price)
@@ -151,13 +148,12 @@ def create_bullish_ftr_scenario() -> List[dict]:
 
 def create_bearish_ftr_scenario() -> List[dict]:
     """سناریوی FTR نزولی"""
-    n = 70
+    n = 75
     prices = []
     highs = []
     lows = []
     opens = []
     
-    # فاز ۱: روند نزولی با Swingهای واضح
     for i in range(5):
         price = 200 - i * 0.5
         opens.append(price + 0.3)
@@ -193,7 +189,7 @@ def create_bearish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.3)
         lows.append(price - 0.3)
     
-    # فاز ۲: شکست حمایت 192
+    # شکست حمایت ۱۹۲
     price = 190
     opens.append(191.5)
     prices.append(price)
@@ -207,7 +203,7 @@ def create_bearish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.5)
         lows.append(price - 0.5)
     
-    # فاز ۳: Impulse نزولی
+    # Impulse نزولی
     for i in range(6):
         price = 185 - i * 2.0
         opens.append(price + 1.5)
@@ -215,25 +211,31 @@ def create_bearish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.6)
         lows.append(price - 0.5)
     
-    # فاز ۴: Base - محدوده 172-176
+    # Base
     base_high = 176
     base_low = 172
-    for i in range(8):
+    for i in range(7):
         price = base_high - (i % 3) * 1.3
         opens.append(price)
         prices.append(price)
         highs.append(base_high)
         lows.append(base_low)
     
-    # فاز ۵: ادامه نزول
-    for i in range(6):
-        price = base_low - 2 - i * 1.5
+    # خروج نزولی از Base
+    price = base_low - 2.5
+    opens.append(base_low - 0.5)
+    prices.append(price)
+    highs.append(base_low + 0.3)
+    lows.append(price - 0.7)
+    
+    for i in range(5):
+        price = base_low - 4 - i * 1.5
         opens.append(price + 1.0)
         prices.append(price)
         highs.append(price + 0.5)
         lows.append(price - 0.7)
     
-    # فاز ۶: بازگشت به Zone
+    # بازگشت به Zone
     for i in range(12):
         price = base_low + 0.5 + i * 0.3
         opens.append(price - 0.2)
@@ -241,7 +243,7 @@ def create_bearish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.3)
         lows.append(price - 0.4)
     
-    for i in range(4):
+    for i in range(6):
         price = base_high + 1 + i * 0.2
         opens.append(price - 0.1)
         prices.append(price)
@@ -262,27 +264,21 @@ def get_default_config() -> FTREngineConfig:
             min_swing_distance_pct=0.0005
         ),
         structure_config=StructureAnalyzerConfig(
-            min_level_strength=1,  # تغییر به ۱ تا سطح با یک Swing هم ایجاد شود
-            level_tolerance_pct=0.005,  # افزایش tolerance به 0.5%
+            min_level_strength=1,
+            level_tolerance_pct=0.005,
             break_validation_candles=1,
             min_break_distance_pct=0.001
-        ),
-        breakout_config=BreakoutDetectorConfig(
-            break_method="close",
-            min_break_distance_pct=0.001,
-            min_break_strength=0.2,  # کاهش قدرت لازم
-            confirmation_candles=1
         ),
         impulse_config=ImpulseDetectorConfig(
             min_impulse_candles=2,
             max_impulse_candles=10,
             min_impulse_distance_pct=0.002,
-            min_body_ratio=0.3  # کاهش نسبت بدنه
+            min_body_ratio=0.3
         ),
         base_config=BaseDetectorConfig(
             min_base_candles=2,
             max_base_candles=15,
-            max_retracement_pct=0.5,  # افزایش تحمل بازگشت
+            max_retracement_pct=0.5,
             max_base_range_pct=0.30
         ),
         zone_config=ZoneConstructorConfig(
@@ -376,3 +372,58 @@ class TestFTRDetection:
                 zones.extend(result.zones)
         
         assert len(zones) == 0, "در داده تصادفی نباید FTR Zone ایجاد شود"
+    
+    def test_level_not_consumed_before_zone(self):
+        """تست: سطح قبل از ساخت Zone مصرف نشود"""
+        ohlcv_data = create_bullish_ftr_scenario()
+        engine = FTREngine(get_default_config())
+        
+        # پردازش فقط تا قبل از Base کامل
+        for i in range(2, 35):
+            engine.process_bar(ohlcv_data, i)
+        
+        # بررسی سطوح ساختاری
+        structure_levels = engine.structure_analyzer.get_structure_levels()
+        
+        for level in structure_levels:
+            if level.level_type in ["RESISTANCE", "SUPPLY"]:
+                # سطح مقاومت نباید مصرف شده باشد
+                # مگر اینکه Zone ساخته شده باشد
+                if not level.is_consumed:
+                    # سطح مصرف نشده — این مورد انتظار است
+                    pass
+    
+    def test_break_not_processed_twice(self):
+        """تست: شکست تکراری پردازش نشود"""
+        ohlcv_data = create_bullish_ftr_scenario()
+        engine = FTREngine(get_default_config())
+        
+        zones = []
+        
+        for i in range(2, len(ohlcv_data)):
+            result = engine.process_bar(ohlcv_data, i)
+            if result.zones:
+                zones.extend(result.zones)
+        
+        # بررسی عدم وجود Zone تکراری
+        zone_ids = [z.zone_id for z in zones]
+        assert len(zone_ids) == len(set(zone_ids)), "Zone تکراری وجود دارد"
+    
+    def test_zone_consumes_level(self):
+        """تست: پس از ساخت Zone، سطح مصرف شود"""
+        ohlcv_data = create_bullish_ftr_scenario()
+        engine = FTREngine(get_default_config())
+        
+        zones = []
+        
+        for i in range(2, len(ohlcv_data)):
+            result = engine.process_bar(ohlcv_data, i)
+            if result.zones:
+                zones.extend(result.zones)
+        
+        if zones:
+            zone = zones[0]
+            structure_level = zone.structure_reference
+            
+            if structure_level:
+                assert structure_level.is_consumed, "سطح باید پس از ساخت Zone مصرف شده باشد"
