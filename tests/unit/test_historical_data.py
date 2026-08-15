@@ -239,7 +239,7 @@ class TestHistoricalDataLoader:
     
     def test_deterministic_reload(self):
         """تست بارگذاری مجدد قطعی"""
-        data = create_valid_ohluv(40)
+        data = create_valid_ohlcv(40)  # ← اصلاح شد
         csv_path = create_csv_file(data)
         
         try:
