@@ -3,7 +3,7 @@
 """
 اسکریپت اجرای Backtest روی هر ۱۲ نماد
 + حذف سیگنال تکراری
-+ حد سود = ۴ برابر حد ضرر
++ حد سود = ۱.۵ برابر حد ضرر
 """
 
 import sys
@@ -27,7 +27,7 @@ from src.strategy.ftr.zone_constructor import ZoneConstructorConfig
 from src.strategy.ftr.ftb_detector import FTBDetectorConfig
 from src.strategy.signal.signal_quality_types import SignalQualityConfig
 
-TARGET_RR = 4.0  # حد سود = ۴ برابر حد ضرر
+TARGET_RR = 1.5  # حد سود = ۱.۵ برابر حد ضرر
 
 
 def build_pipeline_config(symbol: str, timeframe: str, initial_equity: float) -> StrategyPipelineConfig:
@@ -56,7 +56,7 @@ def build_pipeline_config(symbol: str, timeframe: str, initial_equity: float) ->
                 max_retracement_pct=0.75, max_base_range_pct=0.40,
             ),
             zone_config=ZoneConstructorConfig(
-                invalidation_buffer_pct=0.25,  # افزایش از 0.10 به 0.25
+                invalidation_buffer_pct=0.25,
                 min_zone_height_pct=0.0003,
             ),
             ftb_config=FTBDetectorConfig(
@@ -138,10 +138,9 @@ def main():
     }
     
     per_symbol_stats = {}
-    processed_signal_keys: Set[str] = set()  # جلوگیری از Duplicate
-    executed_trades: Set[str] = set()  # جلوگیری از اجرای تکراری
+    processed_signal_keys: Set[str] = set()
+    executed_trades: Set[str] = set()
     
-    # ذخیره Trade ها برای تحلیل
     all_trades = []
     
     for symbol, candles in datasets.items():
@@ -164,7 +163,6 @@ def main():
             symbol_stats['ftb_events'] = len(pipeline.ftr_engine.get_ftb_events())
             
             for signal in result.signals:
-                # Duplicate Check: بر اساس signal_id
                 signal_key = signal.signal_id
                 
                 if signal_key in processed_signal_keys:
@@ -186,7 +184,6 @@ def main():
                 if trade_signal is None:
                     continue
                 
-                # اعمال TP = 4 × SL
                 entry = trade_signal.entry_price
                 sl = trade_signal.stop_loss
                 direction = trade_signal.direction
@@ -195,7 +192,6 @@ def main():
                 trade_signal.take_profit = new_tp
                 trade_signal.risk_reward = TARGET_RR
                 
-                # جلوگیری از اجرای تکراری
                 trade_key = f"{symbol}_{direction}_{entry}_{sl}_{new_tp}"
                 
                 if trade_key in executed_trades:
@@ -213,7 +209,6 @@ def main():
                         symbol_stats['orders'] += 1
                         symbol_stats['trades'] += 1
                         
-                        # ثبت Trade برای تحلیل
                         all_trades.append({
                             'symbol': symbol,
                             'direction': direction,
@@ -237,7 +232,7 @@ def main():
               f"{symbol_stats['duplicates']} DUP, "
               f"{symbol_stats['trades']} trades")
     
-    # شبیه‌سازی خروج از معاملات
+    # شبیه‌سازی خروج
     print("\n" + "=" * 50)
     print("TRADE SIMULATION")
     print("=" * 50)
