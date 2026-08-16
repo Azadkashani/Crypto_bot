@@ -20,8 +20,8 @@ class GateIODownloadConfig:
     """پیکربندی دانلود از Gate.io"""
     base_url: str = "https://api.gateio.ws"
     api_version: str = "api/v4"
-    rate_limit_delay: float = 0.15  # ثانیه بین درخواست‌ها
-    max_candles_per_request: int = 2000  # حداکثر کندل در هر پاسخ (بدون limit در request)
+    rate_limit_delay: float = 0.15
+    max_candles_per_request: int = 2000
     timeout: int = 30
     max_retries: int = 5
 
@@ -29,8 +29,6 @@ class GateIODownloadConfig:
 class GateIODownloader:
     """
     دانلود داده تاریخی OHLCV از Gate.io USDT-M Perpetual Futures
-    
-    اصلاح: حذف limit از پارامترها — فقط from/to استفاده می‌شود
     """
     
     def __init__(self, config: Optional[GateIODownloadConfig] = None):
@@ -50,15 +48,6 @@ class GateIODownloader:
     ) -> List[Dict[str, Any]]:
         """
         دریافت کندل‌های OHLCV از Gate.io Futures
-        
-        Args:
-            symbol: نماد (BTC_USDT)
-            timeframe: تایم‌فریم (1h)
-            start_timestamp: شروع (unix seconds)
-            end_timestamp: پایان (unix seconds)
-        
-        Returns:
-            لیست کندل‌ها
         """
         all_candles = []
         
@@ -66,12 +55,9 @@ class GateIODownloader:
             end_timestamp = int(time.time())
         
         if start_timestamp is None:
-            start_timestamp = end_timestamp - (180 * 24 * 3600)  # 6 ماه
+            start_timestamp = end_timestamp - (180 * 24 * 3600)
         
         interval_seconds = self._get_interval_seconds(timeframe)
-        
-        # تقسیم بازه به window های کوچکتر
-        # هر window حداکثر max_candles_per_request کندل است
         window_seconds = self.config.max_candles_per_request * interval_seconds
         
         current_start = start_timestamp
@@ -91,10 +77,8 @@ class GateIODownloader:
                 last_ts = batch[-1]['timestamp']
                 current_start = last_ts + interval_seconds
             else:
-                # اگر batch خالی بود، بازه را جلو ببر
                 current_start = current_end
             
-            # جلوگیری از حلقه بی‌نهایت
             if current_start >= current_end:
                 break
             
@@ -121,9 +105,7 @@ class GateIODownloader:
         start_ts: int,
         end_ts: int
     ) -> List[Dict[str, Any]]:
-        """
-        دریافت یک batch — فقط از from/to استفاده می‌کند
-        """
+        """دریافت یک batch"""
         url = f"{self.config.base_url}/{self.config.api_version}/futures/usdt/candlesticks"
         
         params = {
@@ -132,7 +114,6 @@ class GateIODownloader:
             'from': start_ts,
             'to': end_ts,
         }
-        # NOTE: limit حذف شد — Gate.io اجازه limit + from + to را نمی‌دهد
         
         for attempt in range(self.config.max_retries):
             try:
@@ -153,7 +134,6 @@ class GateIODownloader:
                     time.sleep(self.config.rate_limit_delay * (attempt + 1))
                     continue
                 else:
-                    # خطای دائمی — تلاش مجدد نکن
                     raise GateIODownloadError(
                         f"HTTP {response.status_code}: {response.text[:300]}"
                     )
@@ -176,8 +156,14 @@ class GateIODownloader:
         """
         تبدیل پاسخ Gate.io Futures به فرمت استاندارد
         
-        Gate.io Futures response format:
-        [timestamp, volume, close, high, low, open]
+        Gate.io Futures v4 response format:
+        [
+            {"t": 1700000000, "v": 100500, "c": "50000", "h": "51000", "l": "49000", "o": "49500"},
+            ...
+        ]
+        
+        یا ممکن است به صورت list of lists برگردد:
+        [[timestamp, volume, close, high, low, open], ...]
         """
         if not isinstance(data, list):
             return []
@@ -185,23 +171,58 @@ class GateIODownloader:
         candles = []
         
         for row in data:
-            if not isinstance(row, list) or len(row) < 6:
-                continue
-            
-            try:
-                candle = {
-                    'timestamp': int(row[0]),
-                    'open': float(row[5]),
-                    'high': float(row[3]),
-                    'low': float(row[4]),
-                    'close': float(row[2]),
-                    'volume': float(row[1]),
-                }
+            candle = self._parse_row(row)
+            if candle is not None:
                 candles.append(candle)
-            except (ValueError, TypeError, IndexError):
-                continue
         
         return candles
+    
+    def _parse_row(self, row: Any) -> Optional[Dict[str, Any]]:
+        """پارس یک کندل از پاسخ API"""
+        try:
+            # فرمت dict: {"t": ..., "v": ..., "c": ..., "h": ..., "l": ..., "o": ...}
+            if isinstance(row, dict):
+                timestamp = int(row.get('t', 0))
+                volume = float(row.get('v', 0))
+                close = float(row.get('c', 0))
+                high = float(row.get('h', 0))
+                low = float(row.get('l', 0))
+                open_price = float(row.get('o', 0))
+            
+            # فرمت list: [timestamp, volume, close, high, low, open]
+            elif isinstance(row, list) and len(row) >= 6:
+                timestamp = int(row[0])
+                volume = float(row[1])
+                close = float(row[2])
+                high = float(row[3])
+                low = float(row[4])
+                open_price = float(row[5])
+            
+            else:
+                return None
+            
+            if timestamp <= 0:
+                return None
+            
+            candle = {
+                'timestamp': timestamp,
+                'open': open_price,
+                'high': high,
+                'low': low,
+                'close': close,
+                'volume': volume,
+            }
+            
+            # بررسی اعتبار
+            if candle['high'] < candle['low']:
+                return None
+            if candle['open'] <= 0 or candle['close'] <= 0:
+                return None
+            
+            return candle
+        
+        except (ValueError, TypeError, KeyError):
+            return None
     
     def _get_interval_seconds(self, timeframe: str) -> int:
         """تبدیل timeframe به ثانیه"""
