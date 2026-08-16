@@ -1,7 +1,7 @@
 # FILE: src/strategy/data/gate_io_downloader.py
 
 """
-Gate.io Historical Data Downloader
+Gate.io Historical Data Downloader — USDT-M Perpetual Futures
 """
 
 from typing import Optional, List, Dict, Any
@@ -20,8 +20,8 @@ class GateIODownloadConfig:
     """پیکربندی دانلود از Gate.io"""
     base_url: str = "https://api.gateio.ws"
     api_version: str = "api/v4"
-    rate_limit_delay: float = 0.15  # ثانیه بین درخواست‌ها (حداکثر ~6.67 req/s)
-    max_candles_per_request: int = 2000  # Gate.io Futures حداکثر 2000
+    rate_limit_delay: float = 0.15  # ثانیه بین درخواست‌ها
+    max_candles_per_request: int = 2000  # حداکثر کندل در هر پاسخ (بدون limit در request)
     timeout: int = 30
     max_retries: int = 5
 
@@ -30,7 +30,7 @@ class GateIODownloader:
     """
     دانلود داده تاریخی OHLCV از Gate.io USDT-M Perpetual Futures
     
-    از API عمومی Gate.io برای دریافت کندل‌های تاریخی استفاده می‌کند.
+    اصلاح: حذف limit از پارامترها — فقط from/to استفاده می‌شود
     """
     
     def __init__(self, config: Optional[GateIODownloadConfig] = None):
@@ -53,7 +53,7 @@ class GateIODownloader:
         
         Args:
             symbol: نماد (BTC_USDT)
-            timeframe: تایم‌فریم (1h, 5m, 4h)
+            timeframe: تایم‌فریم (1h)
             start_timestamp: شروع (unix seconds)
             end_timestamp: پایان (unix seconds)
         
@@ -69,23 +69,34 @@ class GateIODownloader:
             start_timestamp = end_timestamp - (180 * 24 * 3600)  # 6 ماه
         
         interval_seconds = self._get_interval_seconds(timeframe)
+        
+        # تقسیم بازه به window های کوچکتر
+        # هر window حداکثر max_candles_per_request کندل است
+        window_seconds = self.config.max_candles_per_request * interval_seconds
+        
         current_start = start_timestamp
         
         while current_start < end_timestamp:
+            current_end = min(current_start + window_seconds, end_timestamp)
+            
             batch = self._fetch_batch(
                 symbol=symbol,
                 timeframe=timeframe,
                 start_ts=current_start,
-                end_ts=end_timestamp
+                end_ts=current_end
             )
             
-            if not batch:
+            if batch:
+                all_candles.extend(batch)
+                last_ts = batch[-1]['timestamp']
+                current_start = last_ts + interval_seconds
+            else:
+                # اگر batch خالی بود، بازه را جلو ببر
+                current_start = current_end
+            
+            # جلوگیری از حلقه بی‌نهایت
+            if current_start >= current_end:
                 break
-            
-            all_candles.extend(batch)
-            
-            last_ts = batch[-1]['timestamp']
-            current_start = last_ts + interval_seconds
             
             time.sleep(self.config.rate_limit_delay)
         
@@ -110,7 +121,9 @@ class GateIODownloader:
         start_ts: int,
         end_ts: int
     ) -> List[Dict[str, Any]]:
-        """دریافت یک batch"""
+        """
+        دریافت یک batch — فقط از from/to استفاده می‌کند
+        """
         url = f"{self.config.base_url}/{self.config.api_version}/futures/usdt/candlesticks"
         
         params = {
@@ -118,8 +131,8 @@ class GateIODownloader:
             'interval': timeframe,
             'from': start_ts,
             'to': end_ts,
-            'limit': self.config.max_candles_per_request,
         }
+        # NOTE: limit حذف شد — Gate.io اجازه limit + from + to را نمی‌دهد
         
         for attempt in range(self.config.max_retries):
             try:
@@ -140,6 +153,7 @@ class GateIODownloader:
                     time.sleep(self.config.rate_limit_delay * (attempt + 1))
                     continue
                 else:
+                    # خطای دائمی — تلاش مجدد نکن
                     raise GateIODownloadError(
                         f"HTTP {response.status_code}: {response.text[:300]}"
                     )
@@ -159,7 +173,12 @@ class GateIODownloader:
         return []
     
     def _parse_response(self, data: Any) -> List[Dict[str, Any]]:
-        """تبدیل پاسخ Gate.io Futures به فرمت استاندارد"""
+        """
+        تبدیل پاسخ Gate.io Futures به فرمت استاندارد
+        
+        Gate.io Futures response format:
+        [timestamp, volume, close, high, low, open]
+        """
         if not isinstance(data, list):
             return []
         
