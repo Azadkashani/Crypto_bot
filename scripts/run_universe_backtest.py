@@ -2,9 +2,6 @@
 
 """
 اسکریپت اجرای Backtest روی هر ۱۲ نماد با Pipeline کامل
-
-نحوه استفاده:
-python scripts/run_universe_backtest.py --timeframe 1h
 """
 
 import sys
@@ -26,10 +23,11 @@ from src.strategy.ftr.impulse_detector import ImpulseDetectorConfig
 from src.strategy.ftr.base_detector import BaseDetectorConfig
 from src.strategy.ftr.zone_constructor import ZoneConstructorConfig
 from src.strategy.ftr.ftb_detector import FTBDetectorConfig
+from src.strategy.signal.signal_quality_types import SignalQualityConfig
 
 
 def build_pipeline_config(symbol: str, timeframe: str, initial_equity: float) -> StrategyPipelineConfig:
-    """ساخت پیکربندی کامل Pipeline — با Config C"""
+    """ساخت پیکربندی کامل Pipeline"""
     return StrategyPipelineConfig(
         symbol=symbol,
         timeframe=timeframe,
@@ -50,29 +48,30 @@ def build_pipeline_config(symbol: str, timeframe: str, initial_equity: float) ->
             ),
             impulse_config=ImpulseDetectorConfig(
                 min_impulse_candles=2,
-                max_impulse_candles=20,
-                min_impulse_distance_pct=0.001,
-                min_body_ratio=0.5,
+                max_impulse_candles=25,
+                min_impulse_distance_pct=0.0005,  # Relax: از 0.001 به 0.0005
+                min_body_ratio=0.3,  # Relax: از 0.5 به 0.3
                 max_retracement_during_impulse=0.25,
             ),
             base_config=BaseDetectorConfig(
-                min_base_candles=3,
-                max_base_candles=20,
-                max_retracement_pct=0.60,
-                max_base_range_pct=0.30,
+                min_base_candles=2,  # Relax: از 3 به 2
+                max_base_candles=30,  # Relax: از 20 به 30
+                max_retracement_pct=0.75,  # Relax: از 0.60 به 0.75
+                max_base_range_pct=0.40,  # Relax: از 0.30 به 0.40
             ),
             zone_config=ZoneConstructorConfig(
                 invalidation_buffer_pct=0.10,
-                min_zone_height_pct=0.0005,
+                min_zone_height_pct=0.0003,  # Relax: از 0.0005 به 0.0003
             ),
             ftb_config=FTBDetectorConfig(
                 max_ftb_wait_candles=50,
                 min_touch_depth_pct=0.0,
-                max_touch_depth_pct=0.8,
+                max_touch_depth_pct=0.9,  # Relax: از 0.8 به 0.9
                 allow_wick_touch=True,
                 allow_close_touch=True,
             )
-        )
+        ),
+        signal_quality_engine=None,  # استفاده از پیش‌فرض با threshold جدید
     )
 
 
@@ -86,6 +85,12 @@ def main():
     
     loader = HistoricalDataLoader()
     universe = TradingUniverseConfig()
+    
+    # Signal Quality با threshold کمتر
+    signal_quality_config = SignalQualityConfig(
+        min_qualified_score=65.0,  # Relax: از 80 به 65
+        min_watch_score=45.0,      # Relax: از 60 به 45
+    )
     
     print("=" * 50)
     print("FTR MULTI-SYMBOL BACKTEST")
@@ -142,6 +147,9 @@ def main():
         pipeline_config = build_pipeline_config(symbol, args.timeframe, args.initial_equity)
         pipeline = StrategyPipeline(pipeline_config)
         
+        # تنظیم Signal Quality
+        pipeline.signal_quality_engine.config = signal_quality_config
+        
         symbol_stats = {
             'ftr_zones': 0,
             'ftb_events': 0,
@@ -159,7 +167,6 @@ def main():
             
             result = pipeline.process_candle(visible_ohlcv, current_index)
             
-            # شمارش FTR Zones
             symbol_stats['ftr_zones'] = len(pipeline.ftr_engine.get_all_zones())
             symbol_stats['ftb_events'] = len(pipeline.ftr_engine.get_ftb_events())
             
@@ -215,9 +222,13 @@ def main():
             'symbols': universe.symbols,
             'timeframe': args.timeframe,
             'initial_equity': args.initial_equity,
-            'impulse_max_candles': 20,
-            'impulse_min_distance': 0.001,
-            'base_max_retracement': 0.60,
+            'impulse_max_candles': 25,
+            'impulse_min_distance': 0.0005,
+            'impulse_body_ratio': 0.3,
+            'base_max_retracement': 0.75,
+            'base_min_candles': 2,
+            'base_max_candles': 30,
+            'min_qualified_score': 65,
         },
         'total_stats': total_stats,
         'per_symbol': per_symbol_stats,
