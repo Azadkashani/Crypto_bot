@@ -17,16 +17,15 @@ from .trade_signal_types import TradeSignal
 class TradeSignalEngine:
     """
     تولید Trade Signal از SignalQualityResult
-    
-    این کلاس مستقل از FTR Core و Signal Quality است.
-    فقط سیگنال‌های QUALIFIED را به TradeSignal تبدیل می‌کند.
     """
+    
+    MIN_TP_DISTANCE_PCT = 0.005  # حداقل 0.5% فاصله TP از Entry
+    MIN_RR_RATIO = 1.0  # حداقل R:R = 1:1
     
     def __init__(self):
         self._signal_counter = 0
     
     def reset(self):
-        """بازنشانی شمارنده"""
         self._signal_counter = 0
     
     def create_trade_signal(
@@ -36,39 +35,17 @@ class TradeSignalEngine:
         ftb_event: FTBEvent,
         structure_levels: List[StructureLevel]
     ) -> Optional[TradeSignal]:
-        """
-        ایجاد Trade Signal از Signal Quality Result
-        
-        فقط سیگنال‌های QUALIFIED به TradeSignal تبدیل می‌شوند.
-        
-        Args:
-            signal_quality: نتیجه ارزیابی کیفیت
-            zone: FTR Zone
-            ftb_event: رویداد FTB
-            structure_levels: سطوح ساختاری موجود
-        
-        Returns:
-            TradeSignal یا None اگر سیگنال QUALIFIED نباشد
-        """
-        # فقط سیگنال‌های QUALIFIED
+        """ایجاد Trade Signal"""
         if signal_quality.classification != SignalClassification.QUALIFIED:
             return None
         
-        # تعیین قیمت ورود از FTB
         entry_price = self._calculate_entry_price(ftb_event, zone)
-        
-        # تعیین Stop Loss از invalidation level
         stop_loss = self._calculate_stop_loss(zone)
-        
-        # تعیین Take Profit از ساختار بازار
-        take_profit = self._calculate_take_profit(
-            zone, entry_price, structure_levels
-        )
+        take_profit = self._calculate_take_profit(zone, entry_price, structure_levels)
         
         if entry_price is None or stop_loss is None or take_profit is None:
             return None
         
-        # محاسبه R:R
         risk = abs(entry_price - stop_loss)
         reward = abs(take_profit - entry_price)
         
@@ -77,7 +54,10 @@ class TradeSignalEngine:
         
         risk_reward = reward / risk
         
-        # ایجاد TradeSignal
+        # بررسی حداقل R:R
+        if risk_reward < self.MIN_RR_RATIO:
+            return None
+        
         self._signal_counter += 1
         signal_id = f"TS_{self._signal_counter}_{signal_quality.timestamp}"
         
@@ -100,43 +80,22 @@ class TradeSignalEngine:
                 'zone_high': zone.zone_high,
                 'zone_low': zone.zone_low,
                 'invalidation_level': zone.invalidation_level,
-                'positive_factors': signal_quality.positive_factors,
-                'warning_factors': signal_quality.warning_factors,
             }
         )
         
-        # اعتبارسنجی
         if not trade_signal.validate():
             return None
         
         return trade_signal
     
-    def _calculate_entry_price(
-        self,
-        ftb_event: FTBEvent,
-        zone: FTRZone
-    ) -> Optional[float]:
-        """
-        محاسبه قیمت ورود از FTB
-        
-        برای LONG: قیمت لمس (یا میانه Zone)
-        برای SHORT: قیمت لمس (یا میانه Zone)
-        """
+    def _calculate_entry_price(self, ftb_event: FTBEvent, zone: FTRZone) -> Optional[float]:
         if ftb_event is None:
             return zone.zone_midpoint
-        
         return ftb_event.price
     
-    def _calculate_stop_loss(
-        self,
-        zone: FTRZone
-    ) -> Optional[float]:
-        """
-        محاسبه Stop Loss از invalidation level Zone
-        """
+    def _calculate_stop_loss(self, zone: FTRZone) -> Optional[float]:
         if zone.invalidation_level is None:
             return None
-        
         return zone.invalidation_level
     
     def _calculate_take_profit(
@@ -146,38 +105,36 @@ class TradeSignalEngine:
         structure_levels: List[StructureLevel]
     ) -> Optional[float]:
         """
-        محاسبه Take Profit بر اساس ساختار بازار
-        
-        برای LONG: نزدیک‌ترین مقاومت بالای Entry
-        برای SHORT: نزدیک‌ترین حمایت زیر Entry
+        محاسبه TP با حداقل فاصله 0.5% از Entry
         """
         if zone.direction == "LONG":
-            # جستجوی نزدیک‌ترین مقاومت بالای Entry
-            resistances = [
-                l for l in structure_levels
-                if l.level_type in ["RESISTANCE", "SUPPLY"]
-                and l.price > entry_price
-            ]
+            valid_resistances = []
+            for level in structure_levels:
+                if level.level_type in ["RESISTANCE", "SUPPLY"]:
+                    if level.price > entry_price:
+                        distance_pct = (level.price - entry_price) / entry_price
+                        if distance_pct >= self.MIN_TP_DISTANCE_PCT:
+                            valid_resistances.append(level)
             
-            if not resistances:
+            if not valid_resistances:
                 return None
             
-            # نزدیک‌ترین مقاومت
-            nearest = min(resistances, key=lambda l: l.price)
+            nearest = min(valid_resistances, key=lambda l: l.price)
             return nearest.price
         
         elif zone.direction == "SHORT":
-            # جستجوی نزدیک‌ترین حمایت زیر Entry
-            supports = [
-                l for l in structure_levels
-                if l.level_type in ["SUPPORT", "DEMAND"]
-                and l.price < entry_price
-            ]
+            valid_supports = []
+            for level in structure_levels:
+                if level.level_type in ["SUPPORT", "DEMAND"]:
+                    if level.price < entry_price:
+                        distance_pct = (entry_price - level.price) / entry_price
+                        if distance_pct >= self.MIN_TP_DISTANCE_PCT:
+                            valid_supports.append(level)
             
-            if not supports:
+            if not valid_supports:
                 return None
             
-            nearest = max(supports, key=lambda l: l.price)
+            nearest = max(valid_supports, key=lambda l: l.price)
             return nearest.price
         
         return None
