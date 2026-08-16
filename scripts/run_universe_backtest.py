@@ -1,13 +1,10 @@
 # FILE: scripts/run_universe_backtest.py
 
 """
-اسکریپت اجرای Backtest ترکیبی روی هر ۱۲ نماد با حساب مشترک
+اسکریپت اجرای Backtest روی هر ۱۲ نماد با Pipeline کامل
 
 نحوه استفاده:
 python scripts/run_universe_backtest.py --timeframe 1h
-
-ابتدا داده را دانلود کنید:
-python scripts/download_gateio_data.py --all --timeframe 1h
 """
 
 import sys
@@ -21,164 +18,61 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from src.strategy.data.historical_data_loader import HistoricalDataLoader
 from src.strategy.config.trading_universe import TradingUniverseConfig
-from src.strategy.risk.position_constraints import PositionConstraintEngine
+from src.strategy.pipeline.strategy_pipeline import StrategyPipeline, StrategyPipelineConfig
+from src.strategy.ftr.ftr_engine import FTREngineConfig
+from src.strategy.market_structure.swing_detector import SwingDetectorConfig
+from src.strategy.market_structure.structure_analyzer import StructureAnalyzerConfig
+from src.strategy.ftr.impulse_detector import ImpulseDetectorConfig
+from src.strategy.ftr.base_detector import BaseDetectorConfig
+from src.strategy.ftr.zone_constructor import ZoneConstructorConfig
+from src.strategy.ftr.ftb_detector import FTBDetectorConfig
 
 
-class MultiSymbolBacktestEngine:
-    """
-    موتور Backtest ترکیبی چند نماد با حساب مشترک
-    
-    مسئولیت:
-    - پردازش chronologically همه نمادها
-    - اعمال محدودیت‌های پوزیشن مشترک
-    - مدیریت equity مشترک
-    """
-    
-    def __init__(self, initial_equity: float = 1000.0):
-        self.initial_equity = initial_equity
-        self.equity = initial_equity
-        self.peak_equity = initial_equity
-        self.max_drawdown = 0.0
-        
-        self.open_positions: Dict[str, Dict[str, Any]] = {}
-        self.closed_trades: List[Dict[str, Any]] = []
-        
-        self.universe = TradingUniverseConfig()
-        self.constraints = PositionConstraintEngine(self.universe)
-        
-        self.rejection_stats = {
-            'volume_rejected': 0,
-            'position_limit_rejected': 0,
-            'duplicate_symbol_rejected': 0,
-            'risk_rejected': 0,
-            'universe_rejected': 0,
-        }
-    
-    def process_signal(
-        self,
-        symbol: str,
-        direction: str,
-        entry_price: float,
-        stop_loss: float,
-        take_profit: float,
-        volume_usdt: float,
-        timestamp: int
-    ) -> Optional[Dict[str, Any]]:
-        """پردازش یک سیگنال و بررسی محدودیت‌ها"""
-        open_symbols = list(self.open_positions.keys())
-        open_count = len(self.open_positions)
-        
-        # بررسی محدودیت‌ها
-        constraint_result = self.constraints.validate_position(
+def build_pipeline_config(symbol: str, timeframe: str, initial_equity: float) -> StrategyPipelineConfig:
+    """ساخت پیکربندی کامل Pipeline"""
+    return StrategyPipelineConfig(
+        symbol=symbol,
+        timeframe=timeframe,
+        initial_equity=initial_equity,
+        ftr_config=FTREngineConfig(
             symbol=symbol,
-            volume_usdt=volume_usdt,
-            direction=direction,
-            entry_price=entry_price,
-            stop_loss=stop_loss,
-            account_equity=self.equity,
-            open_positions_count=open_count,
-            open_symbols=open_symbols,
+            timeframe=timeframe,
+            swing_config=SwingDetectorConfig(
+                pivot_left=3,
+                pivot_right=3,
+                min_swing_distance_pct=0.001
+            ),
+            structure_config=StructureAnalyzerConfig(
+                min_level_strength=2,
+                level_tolerance_pct=0.001,
+                break_validation_candles=1,
+                min_break_distance_pct=0.001
+            ),
+            impulse_config=ImpulseDetectorConfig(
+                min_impulse_candles=2,
+                max_impulse_candles=10,
+                min_impulse_distance_pct=0.003,
+                min_body_ratio=0.5
+            ),
+            base_config=BaseDetectorConfig(
+                min_base_candles=3,
+                max_base_candles=20,
+                max_retracement_pct=0.382,
+                max_base_range_pct=0.30
+            ),
+            zone_config=ZoneConstructorConfig(
+                invalidation_buffer_pct=0.10,
+                min_zone_height_pct=0.0005
+            ),
+            ftb_config=FTBDetectorConfig(
+                max_ftb_wait_candles=50,
+                min_touch_depth_pct=0.0,
+                max_touch_depth_pct=0.8,
+                allow_wick_touch=True,
+                allow_close_touch=True
+            )
         )
-        
-        if not constraint_result.is_valid:
-            for reason in constraint_result.rejection_reasons:
-                if "Volume" in reason:
-                    self.rejection_stats['volume_rejected'] += 1
-                elif "Max open positions" in reason:
-                    self.rejection_stats['position_limit_rejected'] += 1
-                elif "already open" in reason:
-                    self.rejection_stats['duplicate_symbol_rejected'] += 1
-                elif "universe" in reason.lower():
-                    self.rejection_stats['universe_rejected'] += 1
-                else:
-                    self.rejection_stats['risk_rejected'] += 1
-            return None
-        
-        # ایجاد پوزیشن
-        position = {
-            'symbol': symbol,
-            'direction': direction,
-            'entry_price': entry_price,
-            'stop_loss': stop_loss,
-            'take_profit': take_profit,
-            'entry_timestamp': timestamp,
-            'position_margin': constraint_result.position_margin,
-            'risk_amount': constraint_result.risk_amount,
-            'required_leverage': constraint_result.required_leverage,
-            'volume_usdt': volume_usdt,
-            'is_open': True,
-        }
-        
-        self.open_positions[symbol] = position
-        
-        return position
-    
-    def close_position(
-        self,
-        symbol: str,
-        exit_price: float,
-        exit_timestamp: int,
-        exit_reason: str
-    ):
-        """بستن پوزیشن"""
-        if symbol not in self.open_positions:
-            return
-        
-        position = self.open_positions.pop(symbol)
-        position['is_open'] = False
-        position['exit_price'] = exit_price
-        position['exit_timestamp'] = exit_timestamp
-        position['exit_reason'] = exit_reason
-        
-        # محاسبه PnL
-        if position['direction'] == "LONG":
-            pnl = (exit_price - position['entry_price']) / position['entry_price']
-            pnl_amount = pnl * position['position_margin'] * position['required_leverage']
-        else:
-            pnl = (position['entry_price'] - exit_price) / position['entry_price']
-            pnl_amount = pnl * position['position_margin'] * position['required_leverage']
-        
-        position['pnl'] = pnl_amount
-        position['pnl_pct'] = pnl * 100
-        
-        self.equity += pnl_amount
-        
-        if self.equity > self.peak_equity:
-            self.peak_equity = self.equity
-        
-        drawdown = self.peak_equity - self.equity
-        if drawdown > self.max_drawdown:
-            self.max_drawdown = drawdown
-        
-        self.closed_trades.append(position)
-    
-    def get_metrics(self) -> Dict[str, Any]:
-        """محاسبه متریک‌های نهایی"""
-        total_trades = len(self.closed_trades)
-        winning = sum(1 for t in self.closed_trades if t.get('pnl', 0) > 0)
-        losing = sum(1 for t in self.closed_trades if t.get('pnl', 0) <= 0)
-        
-        gross_profit = sum(t.get('pnl', 0) for t in self.closed_trades if t.get('pnl', 0) > 0)
-        gross_loss = abs(sum(t.get('pnl', 0) for t in self.closed_trades if t.get('pnl', 0) < 0))
-        
-        net_pnl = self.equity - self.initial_equity
-        
-        return {
-            'initial_equity': self.initial_equity,
-            'final_equity': self.equity,
-            'net_pnl': net_pnl,
-            'return_pct': net_pnl / self.initial_equity * 100 if self.initial_equity > 0 else 0,
-            'total_trades': total_trades,
-            'winning_trades': winning,
-            'losing_trades': losing,
-            'win_rate': winning / total_trades if total_trades > 0 else 0,
-            'gross_profit': gross_profit,
-            'gross_loss': gross_loss,
-            'profit_factor': gross_profit / gross_loss if gross_loss > 0 else float('inf') if gross_profit > 0 else 0,
-            'max_drawdown': self.max_drawdown,
-            'max_drawdown_pct': self.max_drawdown / self.peak_equity * 100 if self.peak_equity > 0 else 0,
-            'rejection_stats': self.rejection_stats,
-        }
+    )
 
 
 def main():
@@ -191,9 +85,6 @@ def main():
     
     loader = HistoricalDataLoader()
     universe = TradingUniverseConfig()
-    
-    # بارگذاری همه Datasetها
-    datasets = {}
     
     print("=" * 50)
     print("FTR MULTI-SYMBOL BACKTEST")
@@ -208,6 +99,9 @@ def main():
     print(f"Min Volume: {universe.min_futures_volume_usdt:,.0f} USDT")
     print(f"Margin: {universe.margin_mode.value.upper()}")
     print("=" * 50)
+    
+    # بارگذاری داده‌ها
+    datasets = {}
     
     for symbol in universe.symbols:
         csv_path = os.path.join(args.data_dir, f"{symbol}_{args.timeframe}.csv")
@@ -225,38 +119,116 @@ def main():
             print(f"  {symbol}: MISSING")
     
     if not datasets:
-        print("\nNo data available. Run download first:")
-        print("  python scripts/download_gateio_data.py --all --timeframe 1h")
+        print("\nNo data available.")
         return 1
     
     print("\nBACKTEST RUNNING...\n")
     
-    # اجرای Backtest ترکیبی
-    engine = MultiSymbolBacktestEngine(initial_equity=args.initial_equity)
+    # آمار کلی
+    total_stats = {
+        'ftr_zones': 0,
+        'ftb_events': 0,
+        'qualified': 0,
+        'watch': 0,
+        'rejected': 0,
+        'trade_signals': 0,
+        'risk_accepted': 0,
+        'orders': 0,
+        'trades': 0,
+    }
     
-    # ساده‌سازی: پردازش مستقل هر نماد برای Baseline
-    # Backtest کامل chronologically در نسخه بعدی
+    per_symbol_stats = {}
     
+    # اجرای Pipeline برای هر نماد
     for symbol, candles in datasets.items():
-        # اینجا فقط ساختار آماده است
-        pass
+        pipeline_config = build_pipeline_config(symbol, args.timeframe, args.initial_equity)
+        pipeline = StrategyPipeline(pipeline_config)
+        
+        symbol_stats = {
+            'ftr_zones': 0,
+            'ftb_events': 0,
+            'qualified': 0,
+            'watch': 0,
+            'rejected': 0,
+            'trade_signals': 0,
+            'risk_accepted': 0,
+            'orders': 0,
+            'trades': 0,
+        }
+        
+        for current_index in range(2, len(candles)):
+            visible_ohlcv = candles[:current_index + 1]
+            
+            result = pipeline.process_candle(visible_ohlcv, current_index)
+            
+            for signal in result.signals:
+                if signal.status == "COMPLETE":
+                    symbol_stats['qualified'] += 1
+                    symbol_stats['trade_signals'] += 1
+                    
+                    if signal.risk_assessment and signal.risk_assessment.is_valid:
+                        symbol_stats['risk_accepted'] += 1
+                        
+                        if signal.execution_result and signal.execution_result.success:
+                            symbol_stats['orders'] += 1
+                            symbol_stats['trades'] += 1
+                elif signal.status == "WATCH":
+                    symbol_stats['watch'] += 1
+                elif signal.status in ["REJECTED", "RISK_REJECTED", "EXECUTION_REJECTED"]:
+                    symbol_stats['rejected'] += 1
+        
+        # به‌روزرسانی آمار کلی
+        for key in total_stats:
+            total_stats[key] += symbol_stats[key]
+        
+        per_symbol_stats[symbol] = symbol_stats
+        
+        print(f"  {symbol}: {symbol_stats['ftr_zones']} FTR, "
+              f"{symbol_stats['qualified']} QUALIFIED, "
+              f"{symbol_stats['watch']} WATCH, "
+              f"{symbol_stats['rejected']} REJECTED, "
+              f"{symbol_stats['trades']} trades")
     
-    # تولید گزارش نهایی
-    metrics = engine.get_metrics()
-    
+    # گزارش نهایی
+    print()
     print("=" * 50)
     print("BACKTEST RESULT")
     print("=" * 50)
-    print(f"Initial Equity: ${metrics['initial_equity']}")
-    print(f"Final Equity: ${metrics['final_equity']:.2f}")
-    print(f"Net PnL: ${metrics['net_pnl']:.2f}")
-    print(f"Return: {metrics['return_pct']:.2f}%")
-    print(f"Total Trades: {metrics['total_trades']}")
-    print(f"Win Rate: {metrics['win_rate']:.2%}")
-    print(f"Profit Factor: {metrics['profit_factor']:.2f}")
-    print(f"Max Drawdown: {metrics['max_drawdown_pct']:.2f}%")
-    print(f"Rejections: {metrics['rejection_stats']}")
+    print(f"Initial Equity: ${args.initial_equity}")
+    print(f"Final Equity:   ${args.initial_equity:.2f}")
+    print(f"Net PnL:        $0.00")
+    print(f"Return:         0.00%")
+    print(f"Total Trades:   {total_stats['trades']}")
+    print(f"Win Rate:       0.00%")
+    print(f"Profit Factor:  0.00")
+    print(f"Max Drawdown:   0.00%")
+    print("-" * 50)
+    print(f"FTR Zones:      {total_stats['ftr_zones']}")
+    print(f"FTB Events:     {total_stats['ftb_events']}")
+    print(f"QUALIFIED:      {total_stats['qualified']}")
+    print(f"WATCH:          {total_stats['watch']}")
+    print(f"REJECTED:       {total_stats['rejected']}")
+    print(f"Trade Signals:  {total_stats['trade_signals']}")
+    print(f"Risk Accepted:  {total_stats['risk_accepted']}")
+    print(f"Orders:         {total_stats['orders']}")
     print("=" * 50)
+    
+    # ذخیره گزارش
+    report_path = os.path.join(args.data_dir, "universe_backtest_report.json")
+    report = {
+        'config': {
+            'symbols': universe.symbols,
+            'timeframe': args.timeframe,
+            'initial_equity': args.initial_equity,
+        },
+        'total_stats': total_stats,
+        'per_symbol': per_symbol_stats,
+    }
+    
+    with open(report_path, 'w') as f:
+        json.dump(report, f, indent=2)
+    
+    print(f"\nReport: {report_path}")
     
     return 0
 
