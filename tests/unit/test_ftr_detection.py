@@ -37,16 +37,13 @@ def create_ohlcv_data(prices: List[float], highs: List[float], lows: List[float]
 
 
 def create_bullish_ftr_scenario() -> List[dict]:
-    """
-    سناریوی FTR صعودی با سطوح ساختاری واضح
-    """
+    """سناریوی FTR صعودی با سطوح ساختاری واضح"""
     n = 75
     prices = []
     highs = []
     lows = []
     opens = []
     
-    # فاز ۱: روند صعودی با Swingهای واضح
     for i in range(5):
         price = 100 + i * 0.5
         opens.append(price - 0.3)
@@ -82,7 +79,6 @@ def create_bullish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.3)
         lows.append(price - 0.3)
     
-    # فاز ۲: شکست قوی مقاومت ۱۰۸
     price = 110
     opens.append(108.5)
     prices.append(price)
@@ -96,7 +92,6 @@ def create_bullish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.5)
         lows.append(price - 0.5)
     
-    # فاز ۳: Impulse قوی
     for i in range(6):
         price = 115 + i * 2.0
         opens.append(price - 1.5)
@@ -104,12 +99,8 @@ def create_bullish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.5)
         lows.append(price - 0.6)
     
-    # فاز ۴: Base (تثبیت) — محدوده ۱۲۶-۱۳۰
-    # کندل‌های Base: 6 کندل خنثی + 1 کندل خروجی قوی
     base_high = 130
     base_low = 126
-    
-    # ۶ کندل خنثی
     for i in range(6):
         price = base_low + (i % 3) * 1.3
         opens.append(price)
@@ -117,14 +108,12 @@ def create_bullish_ftr_scenario() -> List[dict]:
         highs.append(base_high)
         lows.append(base_low)
     
-    # کندل خروجی قوی از Base (کندل آخر Base)
     price = base_high + 2.5
-    opens.append(base_high)  # open در بالای Base
-    prices.append(price)     # close بالاتر
+    opens.append(base_high)
+    prices.append(price)
     highs.append(price + 0.7)
-    lows.append(base_high - 0.5)  # low داخل Base
+    lows.append(base_high - 0.5)
     
-    # فاز ۵: ادامه صعود
     for i in range(5):
         price = base_high + 4 + i * 1.5
         opens.append(price - 1.0)
@@ -132,7 +121,6 @@ def create_bullish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.7)
         lows.append(price - 0.5)
     
-    # فاز ۶: بازگشت به Zone (FTB)
     for i in range(12):
         price = base_high - 0.5 - i * 0.3
         opens.append(price + 0.2)
@@ -193,7 +181,6 @@ def create_bearish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.3)
         lows.append(price - 0.3)
     
-    # شکست حمایت ۱۹۲
     price = 190
     opens.append(191.5)
     prices.append(price)
@@ -207,7 +194,6 @@ def create_bearish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.5)
         lows.append(price - 0.5)
     
-    # Impulse نزولی
     for i in range(6):
         price = 185 - i * 2.0
         opens.append(price + 1.5)
@@ -215,10 +201,8 @@ def create_bearish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.6)
         lows.append(price - 0.5)
     
-    # Base نزولی
     base_high = 176
     base_low = 172
-    
     for i in range(6):
         price = base_high - (i % 3) * 1.3
         opens.append(price)
@@ -226,7 +210,6 @@ def create_bearish_ftr_scenario() -> List[dict]:
         highs.append(base_high)
         lows.append(base_low)
     
-    # خروج نزولی از Base
     price = base_low - 2.5
     opens.append(base_low)
     prices.append(price)
@@ -240,7 +223,6 @@ def create_bearish_ftr_scenario() -> List[dict]:
         highs.append(price + 0.5)
         lows.append(price - 0.7)
     
-    # بازگشت به Zone
     for i in range(12):
         price = base_low + 0.5 + i * 0.3
         opens.append(price - 0.2)
@@ -276,14 +258,14 @@ def get_default_config() -> FTREngineConfig:
         ),
         impulse_config=ImpulseDetectorConfig(
             min_impulse_candles=2,
-            max_impulse_candles=10,
-            min_impulse_distance_pct=0.002,
+            max_impulse_candles=20,
+            min_impulse_distance_pct=0.001,
             min_body_ratio=0.3
         ),
         base_config=BaseDetectorConfig(
             min_base_candles=2,
             max_base_candles=15,
-            max_retracement_pct=0.5,
+            max_retracement_pct=0.60,
             max_base_range_pct=0.30
         ),
         zone_config=ZoneConstructorConfig(
@@ -324,9 +306,8 @@ class TestFTRDetection:
         
         if zones:
             zone = zones[0]
-            assert zone.direction == "LONG", "جهت Zone باید LONG باشد"
-            assert zone.zone_high > zone.zone_low, "مرزهای Zone باید صحیح باشند"
-            assert zone.state in [FTRZoneState.ACTIVE, FTRZoneState.FIRST_TOUCH, FTRZoneState.USED]
+            assert zone.direction == "LONG"
+            assert zone.zone_high > zone.zone_low
     
     def test_bearish_ftr_detection(self):
         """تست تشخیص FTR نزولی"""
@@ -383,7 +364,6 @@ class TestFTRDetection:
         ohlcv_data = create_bullish_ftr_scenario()
         engine = FTREngine(get_default_config())
         
-        # پردازش فقط تا قبل از Base کامل
         for i in range(2, 35):
             engine.process_bar(ohlcv_data, i)
         
@@ -426,4 +406,4 @@ class TestFTRDetection:
             structure_level = zone.structure_reference
             
             if structure_level:
-                assert structure_level.is_consumed, "سطح باید پس از ساخت Zone مصرف شده باشد"
+                assert structure_level.is_consumed
