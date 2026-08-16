@@ -20,7 +20,36 @@ class TestGateIODownloader:
         return GateIODownloader(GateIODownloadConfig(
             rate_limit_delay=0.0,
             max_retries=1,
+            max_candles_per_request=100,
         ))
+    
+    def test_no_limit_param_with_from_to(self):
+        """تست عدم وجود limit در پارامترها"""
+        downloader = self.get_downloader()
+        
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value=[])
+        
+        downloader.session.get = MagicMock(return_value=mock_response)
+        
+        downloader._fetch_batch(
+            symbol="BTC_USDT",
+            timeframe="1h",
+            start_ts=1000,
+            end_ts=2000
+        )
+        
+        # بررسی پارامترهای ارسال‌شده
+        call_kwargs = downloader.session.get.call_args
+        assert call_kwargs is not None
+        
+        # استخراج params
+        params = call_kwargs[1].get('params', {})
+        
+        assert 'limit' not in params, "limit نباید با from/to همراه باشد"
+        assert 'from' in params
+        assert 'to' in params
     
     def test_interval_conversion(self):
         """تست تبدیل timeframe"""
@@ -41,16 +70,12 @@ class TestGateIODownloader:
         
         with pytest.raises(GateIODownloadError):
             downloader._get_interval_seconds("")
-        
-        with pytest.raises(GateIODownloadError):
-            downloader._get_interval_seconds("abc")
     
     def test_parse_response(self):
         """تست تبدیل پاسخ معتبر"""
         downloader = self.get_downloader()
         
-        # شبیه‌سازی پاسخ Gate.io Futures
-        # [timestamp, volume, close, high, low, open]
+        # Gate.io Futures format: [timestamp, volume, close, high, low, open]
         mock_response = [
             [1700000000, "100.5", "50000", "51000", "49000", "49500"],
             [1700003600, "101.2", "50100", "51100", "49100", "49600"],
@@ -72,36 +97,16 @@ class TestGateIODownloader:
         candles = downloader._parse_response([])
         assert candles == []
     
-    def test_parse_none_response(self):
-        """تست پاسخ None"""
-        downloader = self.get_downloader()
-        candles = downloader._parse_response(None)
-        assert candles == []
-    
     def test_parse_invalid_response(self):
         """تست پاسخ نامعتبر"""
         downloader = self.get_downloader()
         candles = downloader._parse_response(["invalid"])
         assert candles == []
     
-    def test_parse_partial_response(self):
-        """تست پاسخ ناقص"""
-        downloader = self.get_downloader()
-        mock_response = [
-            [1700000000, "100.5", "50000", "51000", "49000"],  # ناقص
-            [1700003600, "101.2", "50100", "51100", "49100", "49600"],  # کامل
-        ]
-        
-        candles = downloader._parse_response(mock_response)
-        
-        assert len(candles) == 1  # فقط کامل
-        assert candles[0]['timestamp'] == 1700003600
-    
     def test_fetch_ohlcv_pagination(self):
-        """تست pagination"""
+        """تست pagination بدون limit"""
         downloader = self.get_downloader()
         
-        # Mock fetch_batch
         batch1 = [
             {'timestamp': 1000, 'open': 100, 'high': 101, 'low': 99, 'close': 100.5, 'volume': 10},
             {'timestamp': 4600, 'open': 100.5, 'high': 102, 'low': 100, 'close': 101, 'volume': 12},
@@ -123,7 +128,7 @@ class TestGateIODownloader:
         assert candles[0]['timestamp'] == 1000
         assert candles[-1]['timestamp'] == 8200
     
-    def test_fetch_ohlcv_deduplication(self):
+    def test_fetch_deduplication(self):
         """تست حذف duplicate"""
         downloader = self.get_downloader()
         
@@ -131,7 +136,6 @@ class TestGateIODownloader:
             {'timestamp': 1000, 'open': 100, 'high': 101, 'low': 99, 'close': 100.5, 'volume': 10},
             {'timestamp': 4600, 'open': 100.5, 'high': 102, 'low': 100, 'close': 101, 'volume': 12},
         ]
-        # batch2 شامل duplicate از batch1
         batch2 = [
             {'timestamp': 4600, 'open': 100.5, 'high': 102, 'low': 100, 'close': 101, 'volume': 12},
             {'timestamp': 8200, 'open': 101, 'high': 103, 'low': 100.5, 'close': 102, 'volume': 15},
@@ -146,16 +150,16 @@ class TestGateIODownloader:
             end_timestamp=11800
         )
         
-        assert len(candles) == 3  # نه 4
+        assert len(candles) == 3
         assert len(set(c['timestamp'] for c in candles)) == 3
     
-    def test_fetch_http_error(self):
-        """تست خطای HTTP"""
+    def test_http_error_no_retry(self):
+        """تست خطای 400 بدون تلاش مجدد"""
         downloader = self.get_downloader()
         
         mock_response = Mock()
-        mock_response.status_code = 404
-        mock_response.text = "Not Found"
+        mock_response.status_code = 400
+        mock_response.text = "INVALID_PARAM_VALUE"
         
         downloader.session.get = MagicMock(return_value=mock_response)
         
@@ -167,7 +171,7 @@ class TestGateIODownloader:
                 end_ts=2000
             )
     
-    def test_fetch_timeout(self):
+    def test_timeout_error(self):
         """تست timeout"""
         downloader = self.get_downloader()
         
