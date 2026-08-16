@@ -1,10 +1,9 @@
 # FILE: scripts/run_universe_backtest.py
 
 """
-اسکریپت اجرای Backtest روی هر ۱۲ نماد با Pipeline کامل
-+ رفع Duplicate Trade
-+ حداقل فاصله TP
-+ حداقل R:R
+اسکریپت اجرای Backtest روی هر ۱۲ نماد
++ حذف سیگنال تکراری
++ حد سود = ۴ برابر حد ضرر
 """
 
 import sys
@@ -28,9 +27,7 @@ from src.strategy.ftr.zone_constructor import ZoneConstructorConfig
 from src.strategy.ftr.ftb_detector import FTBDetectorConfig
 from src.strategy.signal.signal_quality_types import SignalQualityConfig
 
-# تنظیمات جدید
-MIN_TP_DISTANCE_PCT = 0.005  # حداقل 0.5% فاصله TP از Entry
-MIN_RR_RATIO = 1.0  # حداقل R:R = 1:1
+TARGET_RR = 4.0  # حد سود = ۴ برابر حد ضرر
 
 
 def build_pipeline_config(symbol: str, timeframe: str, initial_equity: float) -> StrategyPipelineConfig:
@@ -43,63 +40,41 @@ def build_pipeline_config(symbol: str, timeframe: str, initial_equity: float) ->
             symbol=symbol,
             timeframe=timeframe,
             swing_config=SwingDetectorConfig(
-                pivot_left=3,
-                pivot_right=3,
-                min_swing_distance_pct=0.001
+                pivot_left=3, pivot_right=3, min_swing_distance_pct=0.001
             ),
             structure_config=StructureAnalyzerConfig(
-                min_level_strength=2,
-                level_tolerance_pct=0.001,
-                break_validation_candles=1,
-                min_break_distance_pct=0.001
+                min_level_strength=2, level_tolerance_pct=0.001,
+                break_validation_candles=1, min_break_distance_pct=0.001
             ),
             impulse_config=ImpulseDetectorConfig(
-                min_impulse_candles=2,
-                max_impulse_candles=25,
-                min_impulse_distance_pct=0.0005,
-                min_body_ratio=0.3,
+                min_impulse_candles=2, max_impulse_candles=25,
+                min_impulse_distance_pct=0.0005, min_body_ratio=0.3,
                 max_retracement_during_impulse=0.25,
             ),
             base_config=BaseDetectorConfig(
-                min_base_candles=2,
-                max_base_candles=30,
-                max_retracement_pct=0.75,
-                max_base_range_pct=0.40,
+                min_base_candles=2, max_base_candles=30,
+                max_retracement_pct=0.75, max_base_range_pct=0.40,
             ),
             zone_config=ZoneConstructorConfig(
-                invalidation_buffer_pct=0.10,
+                invalidation_buffer_pct=0.25,  # افزایش از 0.10 به 0.25
                 min_zone_height_pct=0.0003,
             ),
             ftb_config=FTBDetectorConfig(
-                max_ftb_wait_candles=50,
-                min_touch_depth_pct=0.0,
-                max_touch_depth_pct=0.9,
-                allow_wick_touch=True,
-                allow_close_touch=True,
+                max_ftb_wait_candles=50, min_touch_depth_pct=0.0,
+                max_touch_depth_pct=0.9, allow_wick_touch=True, allow_close_touch=True,
             )
         )
     )
 
 
-def is_valid_trade_signal(trade_signal, entry_price: float) -> bool:
-    """بررسی اعتبار Trade Signal از نظر TP distance و R:R"""
-    if trade_signal is None:
-        return False
+def calculate_tp_fixed_rr(entry: float, sl: float, direction: str, target_rr: float = TARGET_RR) -> float:
+    """محاسبه TP با R:R ثابت"""
+    risk = abs(entry - sl)
     
-    if trade_signal.direction == "LONG":
-        tp_distance = (trade_signal.take_profit - entry_price) / entry_price
+    if direction == "LONG":
+        return entry + (risk * target_rr)
     else:
-        tp_distance = (entry_price - trade_signal.take_profit) / entry_price
-    
-    # حداقل فاصله TP
-    if tp_distance < MIN_TP_DISTANCE_PCT:
-        return False
-    
-    # حداقل R:R
-    if trade_signal.risk_reward < MIN_RR_RATIO:
-        return False
-    
-    return True
+        return entry - (risk * target_rr)
 
 
 def main():
@@ -130,8 +105,7 @@ def main():
     print(f"Max per Symbol: {universe.max_position_per_symbol}")
     print(f"Min Volume: {universe.min_futures_volume_usdt:,.0f} USDT")
     print(f"Margin: {universe.margin_mode.value.upper()}")
-    print(f"Min TP Distance: {MIN_TP_DISTANCE_PCT * 100}%")
-    print(f"Min R:R: 1:{MIN_RR_RATIO}")
+    print(f"Target R:R: 1:{TARGET_RR}")
     print("=" * 50)
     
     datasets = {}
@@ -158,21 +132,17 @@ def main():
     print("\nBACKTEST RUNNING...\n")
     
     total_stats = {
-        'ftr_zones': 0,
-        'ftb_events': 0,
-        'qualified': 0,
-        'watch': 0,
-        'rejected': 0,
-        'trade_signals': 0,
-        'risk_accepted': 0,
-        'orders': 0,
-        'trades': 0,
-        'tp_filtered': 0,
-        'rr_filtered': 0,
+        'ftr_zones': 0, 'ftb_events': 0, 'qualified': 0, 'watch': 0,
+        'rejected': 0, 'trade_signals': 0, 'risk_accepted': 0,
+        'orders': 0, 'trades': 0, 'duplicates': 0,
     }
     
     per_symbol_stats = {}
-    processed_signals: Set[str] = set()  # جلوگیری از Duplicate
+    processed_signal_keys: Set[str] = set()  # جلوگیری از Duplicate
+    executed_trades: Set[str] = set()  # جلوگیری از اجرای تکراری
+    
+    # ذخیره Trade ها برای تحلیل
+    all_trades = []
     
     for symbol, candles in datasets.items():
         pipeline_config = build_pipeline_config(symbol, args.timeframe, args.initial_equity)
@@ -180,17 +150,9 @@ def main():
         pipeline.signal_quality_engine.config = signal_quality_config
         
         symbol_stats = {
-            'ftr_zones': 0,
-            'ftb_events': 0,
-            'qualified': 0,
-            'watch': 0,
-            'rejected': 0,
-            'trade_signals': 0,
-            'risk_accepted': 0,
-            'orders': 0,
-            'trades': 0,
-            'tp_filtered': 0,
-            'rr_filtered': 0,
+            'ftr_zones': 0, 'ftb_events': 0, 'qualified': 0, 'watch': 0,
+            'rejected': 0, 'trade_signals': 0, 'risk_accepted': 0,
+            'orders': 0, 'trades': 0, 'duplicates': 0,
         }
         
         for current_index in range(2, len(candles)):
@@ -202,49 +164,65 @@ def main():
             symbol_stats['ftb_events'] = len(pipeline.ftr_engine.get_ftb_events())
             
             for signal in result.signals:
-                # Duplicate Signal Check
+                # Duplicate Check: بر اساس signal_id
                 signal_key = signal.signal_id
                 
-                if signal_key in processed_signals:
+                if signal_key in processed_signal_keys:
+                    symbol_stats['duplicates'] += 1
                     continue
                 
-                processed_signals.add(signal_key)
+                processed_signal_keys.add(signal_key)
                 
-                if signal.status == "COMPLETE":
-                    symbol_stats['qualified'] += 1
+                if signal.status != "COMPLETE":
+                    if signal.status == "WATCH":
+                        symbol_stats['watch'] += 1
+                    elif signal.status in ["REJECTED", "RISK_REJECTED", "EXECUTION_REJECTED"]:
+                        symbol_stats['rejected'] += 1
+                    continue
+                
+                symbol_stats['qualified'] += 1
+                
+                trade_signal = signal.trade_signal
+                if trade_signal is None:
+                    continue
+                
+                # اعمال TP = 4 × SL
+                entry = trade_signal.entry_price
+                sl = trade_signal.stop_loss
+                direction = trade_signal.direction
+                
+                new_tp = calculate_tp_fixed_rr(entry, sl, direction, TARGET_RR)
+                trade_signal.take_profit = new_tp
+                trade_signal.risk_reward = TARGET_RR
+                
+                # جلوگیری از اجرای تکراری
+                trade_key = f"{symbol}_{direction}_{entry}_{sl}_{new_tp}"
+                
+                if trade_key in executed_trades:
+                    symbol_stats['duplicates'] += 1
+                    continue
+                
+                executed_trades.add(trade_key)
+                
+                symbol_stats['trade_signals'] += 1
+                
+                if signal.risk_assessment and signal.risk_assessment.is_valid:
+                    symbol_stats['risk_accepted'] += 1
                     
-                    trade_signal = signal.trade_signal
-                    
-                    if trade_signal is None:
-                        continue
-                    
-                    # بررسی TP Distance
-                    if trade_signal.direction == "LONG":
-                        tp_distance = (trade_signal.take_profit - trade_signal.entry_price) / trade_signal.entry_price
-                    else:
-                        tp_distance = (trade_signal.entry_price - trade_signal.take_profit) / trade_signal.entry_price
-                    
-                    if tp_distance < MIN_TP_DISTANCE_PCT:
-                        symbol_stats['tp_filtered'] += 1
-                        continue
-                    
-                    # بررسی R:R
-                    if trade_signal.risk_reward < MIN_RR_RATIO:
-                        symbol_stats['rr_filtered'] += 1
-                        continue
-                    
-                    symbol_stats['trade_signals'] += 1
-                    
-                    if signal.risk_assessment and signal.risk_assessment.is_valid:
-                        symbol_stats['risk_accepted'] += 1
+                    if signal.execution_result and signal.execution_result.success:
+                        symbol_stats['orders'] += 1
+                        symbol_stats['trades'] += 1
                         
-                        if signal.execution_result and signal.execution_result.success:
-                            symbol_stats['orders'] += 1
-                            symbol_stats['trades'] += 1
-                elif signal.status == "WATCH":
-                    symbol_stats['watch'] += 1
-                elif signal.status in ["REJECTED", "RISK_REJECTED", "EXECUTION_REJECTED"]:
-                    symbol_stats['rejected'] += 1
+                        # ثبت Trade برای تحلیل
+                        all_trades.append({
+                            'symbol': symbol,
+                            'direction': direction,
+                            'signal_index': current_index,
+                            'entry': entry,
+                            'sl': sl,
+                            'tp': new_tp,
+                            'rr': TARGET_RR,
+                        })
         
         for key in total_stats:
             total_stats[key] += symbol_stats[key]
@@ -256,17 +234,86 @@ def main():
               f"{symbol_stats['qualified']} QUALIFIED, "
               f"{symbol_stats['watch']} WATCH, "
               f"{symbol_stats['rejected']} REJECTED, "
-              f"TP: {symbol_stats['tp_filtered']} filtered, "
-              f"RR: {symbol_stats['rr_filtered']} filtered, "
+              f"{symbol_stats['duplicates']} DUP, "
               f"{symbol_stats['trades']} trades")
+    
+    # شبیه‌سازی خروج از معاملات
+    print("\n" + "=" * 50)
+    print("TRADE SIMULATION")
+    print("=" * 50)
+    
+    wins = 0
+    losses = 0
+    total_pnl_pct = 0.0
+    
+    for trade in all_trades:
+        symbol = trade['symbol']
+        entry = trade['entry']
+        sl = trade['sl']
+        tp = trade['tp']
+        direction = trade['direction']
+        idx = trade['signal_index']
+        
+        candles = datasets[symbol]
+        
+        exit_price = None
+        exit_reason = None
+        
+        for j in range(idx + 1, min(idx + 100, len(candles))):
+            c = candles[j]
+            
+            if direction == "LONG":
+                if c['low'] <= sl:
+                    exit_price = sl
+                    exit_reason = "STOP_LOSS"
+                    break
+                if c['high'] >= tp:
+                    exit_price = tp
+                    exit_reason = "TAKE_PROFIT"
+                    break
+            else:
+                if c['high'] >= sl:
+                    exit_price = sl
+                    exit_reason = "STOP_LOSS"
+                    break
+                if c['low'] <= tp:
+                    exit_price = tp
+                    exit_reason = "TAKE_PROFIT"
+                    break
+        
+        if exit_price is None:
+            exit_reason = "TIMEOUT"
+            exit_price = candles[min(idx + 99, len(candles)-1)]['close']
+        
+        if direction == "LONG":
+            pnl_pct = (exit_price - entry) / entry * 100
+        else:
+            pnl_pct = (entry - exit_price) / entry * 100
+        
+        if pnl_pct > 0:
+            wins += 1
+        else:
+            losses += 1
+        
+        total_pnl_pct += pnl_pct
+        
+        print(f"  {symbol} {direction}: entry={entry:.6f}, sl={sl:.6f}, "
+              f"tp={tp:.6f}, exit={exit_price:.6f}, reason={exit_reason}, "
+              f"pnl={pnl_pct:.4f}%")
+    
+    avg_pnl = total_pnl_pct / len(all_trades) if all_trades else 0
     
     print()
     print("=" * 50)
     print("BACKTEST RESULT")
     print("=" * 50)
     print(f"Initial Equity: ${args.initial_equity}")
-    print(f"Final Equity:   ${args.initial_equity:.2f}")
     print(f"Total Trades:   {total_stats['trades']}")
+    print(f"Duplicates:     {total_stats['duplicates']}")
+    print(f"Wins:  {wins}")
+    print(f"Losses: {losses}")
+    print(f"Win Rate: {wins}/{len(all_trades)} = {wins/len(all_trades)*100:.1f}%" if all_trades else "N/A")
+    print(f"Average PnL:   {avg_pnl:.4f}%")
     print("-" * 50)
     print(f"FTR Zones:      {total_stats['ftr_zones']}")
     print(f"FTB Events:     {total_stats['ftb_events']}")
@@ -274,24 +321,17 @@ def main():
     print(f"WATCH:          {total_stats['watch']}")
     print(f"REJECTED:       {total_stats['rejected']}")
     print(f"Trade Signals:  {total_stats['trade_signals']}")
-    print(f"Risk Accepted:  {total_stats['risk_accepted']}")
-    print(f"Orders:         {total_stats['orders']}")
-    print(f"TP Filtered:    {total_stats['tp_filtered']}")
-    print(f"RR Filtered:    {total_stats['rr_filtered']}")
     print("=" * 50)
     
     report_path = os.path.join(args.data_dir, "universe_backtest_report.json")
     report = {
         'config': {
-            'symbols': universe.symbols,
-            'timeframe': args.timeframe,
-            'initial_equity': args.initial_equity,
-            'min_tp_distance_pct': MIN_TP_DISTANCE_PCT,
-            'min_rr_ratio': MIN_RR_RATIO,
+            'target_rr': TARGET_RR,
             'min_qualified_score': 65,
         },
         'total_stats': total_stats,
         'per_symbol': per_symbol_stats,
+        'trades': all_trades,
     }
     
     with open(report_path, 'w') as f:
