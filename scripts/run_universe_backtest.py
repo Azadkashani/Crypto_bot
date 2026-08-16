@@ -2,6 +2,9 @@
 
 """
 اسکریپت اجرای Backtest روی هر ۱۲ نماد با Pipeline کامل
++ رفع Duplicate Trade
++ حداقل فاصله TP
++ حداقل R:R
 """
 
 import sys
@@ -9,7 +12,7 @@ import os
 import argparse
 import json
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -24,6 +27,10 @@ from src.strategy.ftr.base_detector import BaseDetectorConfig
 from src.strategy.ftr.zone_constructor import ZoneConstructorConfig
 from src.strategy.ftr.ftb_detector import FTBDetectorConfig
 from src.strategy.signal.signal_quality_types import SignalQualityConfig
+
+# تنظیمات جدید
+MIN_TP_DISTANCE_PCT = 0.005  # حداقل 0.5% فاصله TP از Entry
+MIN_RR_RATIO = 1.0  # حداقل R:R = 1:1
 
 
 def build_pipeline_config(symbol: str, timeframe: str, initial_equity: float) -> StrategyPipelineConfig:
@@ -49,30 +56,50 @@ def build_pipeline_config(symbol: str, timeframe: str, initial_equity: float) ->
             impulse_config=ImpulseDetectorConfig(
                 min_impulse_candles=2,
                 max_impulse_candles=25,
-                min_impulse_distance_pct=0.0005,  # Relax: از 0.001 به 0.0005
-                min_body_ratio=0.3,  # Relax: از 0.5 به 0.3
+                min_impulse_distance_pct=0.0005,
+                min_body_ratio=0.3,
                 max_retracement_during_impulse=0.25,
             ),
             base_config=BaseDetectorConfig(
-                min_base_candles=2,  # Relax: از 3 به 2
-                max_base_candles=30,  # Relax: از 20 به 30
-                max_retracement_pct=0.75,  # Relax: از 0.60 به 0.75
-                max_base_range_pct=0.40,  # Relax: از 0.30 به 0.40
+                min_base_candles=2,
+                max_base_candles=30,
+                max_retracement_pct=0.75,
+                max_base_range_pct=0.40,
             ),
             zone_config=ZoneConstructorConfig(
                 invalidation_buffer_pct=0.10,
-                min_zone_height_pct=0.0003,  # Relax: از 0.0005 به 0.0003
+                min_zone_height_pct=0.0003,
             ),
             ftb_config=FTBDetectorConfig(
                 max_ftb_wait_candles=50,
                 min_touch_depth_pct=0.0,
-                max_touch_depth_pct=0.9,  # Relax: از 0.8 به 0.9
+                max_touch_depth_pct=0.9,
                 allow_wick_touch=True,
                 allow_close_touch=True,
             )
-        ),
-        signal_quality_engine=None,  # استفاده از پیش‌فرض با threshold جدید
+        )
     )
+
+
+def is_valid_trade_signal(trade_signal, entry_price: float) -> bool:
+    """بررسی اعتبار Trade Signal از نظر TP distance و R:R"""
+    if trade_signal is None:
+        return False
+    
+    if trade_signal.direction == "LONG":
+        tp_distance = (trade_signal.take_profit - entry_price) / entry_price
+    else:
+        tp_distance = (entry_price - trade_signal.take_profit) / entry_price
+    
+    # حداقل فاصله TP
+    if tp_distance < MIN_TP_DISTANCE_PCT:
+        return False
+    
+    # حداقل R:R
+    if trade_signal.risk_reward < MIN_RR_RATIO:
+        return False
+    
+    return True
 
 
 def main():
@@ -86,10 +113,9 @@ def main():
     loader = HistoricalDataLoader()
     universe = TradingUniverseConfig()
     
-    # Signal Quality با threshold کمتر
     signal_quality_config = SignalQualityConfig(
-        min_qualified_score=65.0,  # Relax: از 80 به 65
-        min_watch_score=45.0,      # Relax: از 60 به 45
+        min_qualified_score=65.0,
+        min_watch_score=45.0,
     )
     
     print("=" * 50)
@@ -104,6 +130,8 @@ def main():
     print(f"Max per Symbol: {universe.max_position_per_symbol}")
     print(f"Min Volume: {universe.min_futures_volume_usdt:,.0f} USDT")
     print(f"Margin: {universe.margin_mode.value.upper()}")
+    print(f"Min TP Distance: {MIN_TP_DISTANCE_PCT * 100}%")
+    print(f"Min R:R: 1:{MIN_RR_RATIO}")
     print("=" * 50)
     
     datasets = {}
@@ -139,15 +167,16 @@ def main():
         'risk_accepted': 0,
         'orders': 0,
         'trades': 0,
+        'tp_filtered': 0,
+        'rr_filtered': 0,
     }
     
     per_symbol_stats = {}
+    processed_signals: Set[str] = set()  # جلوگیری از Duplicate
     
     for symbol, candles in datasets.items():
         pipeline_config = build_pipeline_config(symbol, args.timeframe, args.initial_equity)
         pipeline = StrategyPipeline(pipeline_config)
-        
-        # تنظیم Signal Quality
         pipeline.signal_quality_engine.config = signal_quality_config
         
         symbol_stats = {
@@ -160,6 +189,8 @@ def main():
             'risk_accepted': 0,
             'orders': 0,
             'trades': 0,
+            'tp_filtered': 0,
+            'rr_filtered': 0,
         }
         
         for current_index in range(2, len(candles)):
@@ -171,8 +202,37 @@ def main():
             symbol_stats['ftb_events'] = len(pipeline.ftr_engine.get_ftb_events())
             
             for signal in result.signals:
+                # Duplicate Signal Check
+                signal_key = signal.signal_id
+                
+                if signal_key in processed_signals:
+                    continue
+                
+                processed_signals.add(signal_key)
+                
                 if signal.status == "COMPLETE":
                     symbol_stats['qualified'] += 1
+                    
+                    trade_signal = signal.trade_signal
+                    
+                    if trade_signal is None:
+                        continue
+                    
+                    # بررسی TP Distance
+                    if trade_signal.direction == "LONG":
+                        tp_distance = (trade_signal.take_profit - trade_signal.entry_price) / trade_signal.entry_price
+                    else:
+                        tp_distance = (trade_signal.entry_price - trade_signal.take_profit) / trade_signal.entry_price
+                    
+                    if tp_distance < MIN_TP_DISTANCE_PCT:
+                        symbol_stats['tp_filtered'] += 1
+                        continue
+                    
+                    # بررسی R:R
+                    if trade_signal.risk_reward < MIN_RR_RATIO:
+                        symbol_stats['rr_filtered'] += 1
+                        continue
+                    
                     symbol_stats['trade_signals'] += 1
                     
                     if signal.risk_assessment and signal.risk_assessment.is_valid:
@@ -196,6 +256,8 @@ def main():
               f"{symbol_stats['qualified']} QUALIFIED, "
               f"{symbol_stats['watch']} WATCH, "
               f"{symbol_stats['rejected']} REJECTED, "
+              f"TP: {symbol_stats['tp_filtered']} filtered, "
+              f"RR: {symbol_stats['rr_filtered']} filtered, "
               f"{symbol_stats['trades']} trades")
     
     print()
@@ -214,6 +276,8 @@ def main():
     print(f"Trade Signals:  {total_stats['trade_signals']}")
     print(f"Risk Accepted:  {total_stats['risk_accepted']}")
     print(f"Orders:         {total_stats['orders']}")
+    print(f"TP Filtered:    {total_stats['tp_filtered']}")
+    print(f"RR Filtered:    {total_stats['rr_filtered']}")
     print("=" * 50)
     
     report_path = os.path.join(args.data_dir, "universe_backtest_report.json")
@@ -222,12 +286,8 @@ def main():
             'symbols': universe.symbols,
             'timeframe': args.timeframe,
             'initial_equity': args.initial_equity,
-            'impulse_max_candles': 25,
-            'impulse_min_distance': 0.0005,
-            'impulse_body_ratio': 0.3,
-            'base_max_retracement': 0.75,
-            'base_min_candles': 2,
-            'base_max_candles': 30,
+            'min_tp_distance_pct': MIN_TP_DISTANCE_PCT,
+            'min_rr_ratio': MIN_RR_RATIO,
             'min_qualified_score': 65,
         },
         'total_stats': total_stats,
