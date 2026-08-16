@@ -1,7 +1,7 @@
 # FILE: src/strategy/ftr/ftr_engine.py
 
 """
-موتور اصلی تشخیص FTR — با Pending Base Tracking
+موتور اصلی تشخیص FTR — با Pending Base Tracking کامل
 """
 
 from typing import List, Optional, Dict, Any, Tuple
@@ -45,21 +45,25 @@ class FTREngineConfig:
 
 @dataclass
 class PendingBaseState:
-    """وضعیت Pending Base"""
+    """وضعیت Pending Base — برای پیگیری Base در چند کندل"""
     break_key: tuple
     structure_break: StructureBreak
     displacement: DisplacementData
-    start_index: int
+    impulse_end_index: int
     created_index: int
-    last_checked_index: int = -1  # -1 یعنی هنوز بررسی نشده
-    is_complete: bool = False
+    first_check_index: int = -1
+    completion_index: int = -1
+    zone_created: bool = False
     is_invalidated: bool = False
     invalid_reason: str = ""
 
 
 class FTREngine:
     """
-    موتور اصلی تشخیص FTR — با Pending Base Tracking
+    موتور اصلی تشخیص FTR
+    
+    Pipeline:
+    Structure Break → Pending Impulse → Pending Base → FTR Zone → FTB
     """
     
     def __init__(self, config: FTREngineConfig):
@@ -105,6 +109,8 @@ class FTREngine:
     def process_bar(self, ohlcv_data: List[dict], current_index: int) -> FTRDetectionResult:
         """
         پردازش کندل جاری و تشخیص FTR
+        
+        مهم: فقط از visible_ohlcv استفاده می‌شود.
         """
         result = FTRDetectionResult()
         
@@ -151,6 +157,7 @@ class FTREngine:
             if break_index is None:
                 continue
             
+            # تلاش برای Impulse
             displacement = self.impulse_detector.detect_impulse(
                 visible_ohlcv, break_index, structure_break.direction
             )
@@ -158,22 +165,25 @@ class FTREngine:
             if not displacement or not displacement.is_valid:
                 continue
             
-            # Impulse معتبر — ایجاد یا به‌روزرسانی Pending Base
+            # Impulse معتبر — ایجاد Pending Base (اگر وجود ندارد)
             if break_key not in self._pending_bases:
                 self._pending_bases[break_key] = PendingBaseState(
                     break_key=break_key,
                     structure_break=structure_break,
                     displacement=displacement,
-                    start_index=displacement.end_index + 1,
+                    impulse_end_index=displacement.end_index,
                     created_index=current_index,
-                    last_checked_index=-1,  # هنوز بررسی نشده
                 )
-            else:
-                # به‌روزرسانی displacement (ممکن است Impulse گسترش یافته باشد)
-                self._pending_bases[break_key].displacement = displacement
+            
+            # Pending Break حذف می‌شود — دیگر لازم نیست
+            del self._pending_breaks[break_key]
         
-        # ۴. پردازش Pending Bases — تلاش برای تکمیل Base
+        # ۴. پردازش Pending Bases — تلاش برای تکمیل Base در هر کندل
         for break_key, pending_base in list(self._pending_bases.items()):
+            if pending_base.zone_created or pending_base.is_invalidated:
+                del self._pending_bases[break_key]
+                continue
+            
             if break_key in self._processed_breaks:
                 del self._pending_bases[break_key]
                 continue
@@ -182,19 +192,30 @@ class FTREngine:
             displacement = pending_base.displacement
             level = structure_break.broken_level
             
-            # بررسی Base با داده قابل مشاهده
+            if level.is_consumed:
+                del self._pending_bases[break_key]
+                continue
+            
+            # ثبت اولین بررسی
+            if pending_base.first_check_index == -1:
+                pending_base.first_check_index = current_index
+            
+            # بررسی Base با داده قابل مشاهده تا این کندل
             base = self.base_detector.detect_base(visible_ohlcv, displacement)
             
             if base is None or not base.is_valid:
-                # Base هنوز کامل نشده
-                # بررسی انقضا
-                if current_index - pending_base.created_index > 50:
+                # Base هنوز کامل نشده — بررسی انقضا
+                max_wait = self.base_detector.config.max_base_candles + 10
+                
+                if current_index - pending_base.created_index > max_wait:
                     pending_base.is_invalidated = True
                     pending_base.invalid_reason = "BASE_TIMEOUT"
                     del self._pending_bases[break_key]
                 continue
             
             # Base معتبر — ساخت Zone
+            pending_base.completion_index = current_index
+            
             zone = self.zone_constructor.construct_zone(
                 symbol=self.symbol,
                 timeframe=self.timeframe,
@@ -207,12 +228,10 @@ class FTREngine:
             )
             
             if zone and self.zone_constructor.validate_zone(zone):
+                # موفقیت
                 level.is_consumed = True
                 self._processed_breaks.add(break_key)
-                del self._pending_bases[break_key]
-                
-                if break_key in self._pending_breaks:
-                    del self._pending_breaks[break_key]
+                pending_base.zone_created = True
                 
                 zone.update_state(FTRZoneState.ACTIVE)
                 self._active_zones[zone.zone_id] = zone
@@ -221,7 +240,9 @@ class FTREngine:
                 self._zone_creation_indices[zone.zone_id] = current_index
                 
                 result.add_zone(zone)
-                result.add_diagnostic(f"FTR zone created: {zone.zone_id}")
+                result.add_diagnostic(f"FTR zone created: {zone.zone_id} at index {current_index}")
+                
+                del self._pending_bases[break_key]
             else:
                 pending_base.is_invalidated = True
                 pending_base.invalid_reason = "ZONE_INVALID"
