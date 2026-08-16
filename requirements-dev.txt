@@ -1,5 +1,0 @@
-# FTR Trading Bot — Development Dependencies
-
--r requirements.txt
-
-pytest>=7.4,<9
