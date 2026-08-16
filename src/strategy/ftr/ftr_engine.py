@@ -165,7 +165,7 @@ class FTREngine:
             if not displacement or not displacement.is_valid:
                 continue
             
-            # Impulse معتبر — ایجاد Pending Base (اگر وجود ندارد)
+            # Impulse معتبر — ایجاد Pending Base
             if break_key not in self._pending_bases:
                 self._pending_bases[break_key] = PendingBaseState(
                     break_key=break_key,
@@ -175,7 +175,7 @@ class FTREngine:
                     created_index=current_index,
                 )
             
-            # Pending Break حذف می‌شود — دیگر لازم نیست
+            # Pending Break حذف می‌شود
             del self._pending_breaks[break_key]
         
         # ۴. پردازش Pending Bases — تلاش برای تکمیل Base در هر کندل
@@ -196,7 +196,6 @@ class FTREngine:
                 del self._pending_bases[break_key]
                 continue
             
-            # ثبت اولین بررسی
             if pending_base.first_check_index == -1:
                 pending_base.first_check_index = current_index
             
@@ -204,7 +203,6 @@ class FTREngine:
             base = self.base_detector.detect_base(visible_ohlcv, displacement)
             
             if base is None or not base.is_valid:
-                # Base هنوز کامل نشده — بررسی انقضا
                 max_wait = self.base_detector.config.max_base_candles + 10
                 
                 if current_index - pending_base.created_index > max_wait:
@@ -228,7 +226,6 @@ class FTREngine:
             )
             
             if zone and self.zone_constructor.validate_zone(zone):
-                # موفقیت
                 level.is_consumed = True
                 self._processed_breaks.add(break_key)
                 pending_base.zone_created = True
