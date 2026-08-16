@@ -29,7 +29,7 @@ from src.strategy.ftr.ftb_detector import FTBDetectorConfig
 
 
 def build_pipeline_config(symbol: str, timeframe: str, initial_equity: float) -> StrategyPipelineConfig:
-    """ساخت پیکربندی کامل Pipeline"""
+    """ساخت پیکربندی کامل Pipeline — با Config C"""
     return StrategyPipelineConfig(
         symbol=symbol,
         timeframe=timeframe,
@@ -50,26 +50,27 @@ def build_pipeline_config(symbol: str, timeframe: str, initial_equity: float) ->
             ),
             impulse_config=ImpulseDetectorConfig(
                 min_impulse_candles=2,
-                max_impulse_candles=10,
-                min_impulse_distance_pct=0.003,
-                min_body_ratio=0.5
+                max_impulse_candles=20,
+                min_impulse_distance_pct=0.001,
+                min_body_ratio=0.5,
+                max_retracement_during_impulse=0.25,
             ),
             base_config=BaseDetectorConfig(
                 min_base_candles=3,
                 max_base_candles=20,
-                max_retracement_pct=0.382,
-                max_base_range_pct=0.30
+                max_retracement_pct=0.60,
+                max_base_range_pct=0.30,
             ),
             zone_config=ZoneConstructorConfig(
                 invalidation_buffer_pct=0.10,
-                min_zone_height_pct=0.0005
+                min_zone_height_pct=0.0005,
             ),
             ftb_config=FTBDetectorConfig(
                 max_ftb_wait_candles=50,
                 min_touch_depth_pct=0.0,
                 max_touch_depth_pct=0.8,
                 allow_wick_touch=True,
-                allow_close_touch=True
+                allow_close_touch=True,
             )
         )
     )
@@ -100,7 +101,6 @@ def main():
     print(f"Margin: {universe.margin_mode.value.upper()}")
     print("=" * 50)
     
-    # بارگذاری داده‌ها
     datasets = {}
     
     for symbol in universe.symbols:
@@ -124,7 +124,6 @@ def main():
     
     print("\nBACKTEST RUNNING...\n")
     
-    # آمار کلی
     total_stats = {
         'ftr_zones': 0,
         'ftb_events': 0,
@@ -139,7 +138,6 @@ def main():
     
     per_symbol_stats = {}
     
-    # اجرای Pipeline برای هر نماد
     for symbol, candles in datasets.items():
         pipeline_config = build_pipeline_config(symbol, args.timeframe, args.initial_equity)
         pipeline = StrategyPipeline(pipeline_config)
@@ -161,6 +159,10 @@ def main():
             
             result = pipeline.process_candle(visible_ohlcv, current_index)
             
+            # شمارش FTR Zones
+            symbol_stats['ftr_zones'] = len(pipeline.ftr_engine.get_all_zones())
+            symbol_stats['ftb_events'] = len(pipeline.ftr_engine.get_ftb_events())
+            
             for signal in result.signals:
                 if signal.status == "COMPLETE":
                     symbol_stats['qualified'] += 1
@@ -177,31 +179,25 @@ def main():
                 elif signal.status in ["REJECTED", "RISK_REJECTED", "EXECUTION_REJECTED"]:
                     symbol_stats['rejected'] += 1
         
-        # به‌روزرسانی آمار کلی
         for key in total_stats:
             total_stats[key] += symbol_stats[key]
         
         per_symbol_stats[symbol] = symbol_stats
         
         print(f"  {symbol}: {symbol_stats['ftr_zones']} FTR, "
+              f"{symbol_stats['ftb_events']} FTB, "
               f"{symbol_stats['qualified']} QUALIFIED, "
               f"{symbol_stats['watch']} WATCH, "
               f"{symbol_stats['rejected']} REJECTED, "
               f"{symbol_stats['trades']} trades")
     
-    # گزارش نهایی
     print()
     print("=" * 50)
     print("BACKTEST RESULT")
     print("=" * 50)
     print(f"Initial Equity: ${args.initial_equity}")
     print(f"Final Equity:   ${args.initial_equity:.2f}")
-    print(f"Net PnL:        $0.00")
-    print(f"Return:         0.00%")
     print(f"Total Trades:   {total_stats['trades']}")
-    print(f"Win Rate:       0.00%")
-    print(f"Profit Factor:  0.00")
-    print(f"Max Drawdown:   0.00%")
     print("-" * 50)
     print(f"FTR Zones:      {total_stats['ftr_zones']}")
     print(f"FTB Events:     {total_stats['ftb_events']}")
@@ -213,13 +209,15 @@ def main():
     print(f"Orders:         {total_stats['orders']}")
     print("=" * 50)
     
-    # ذخیره گزارش
     report_path = os.path.join(args.data_dir, "universe_backtest_report.json")
     report = {
         'config': {
             'symbols': universe.symbols,
             'timeframe': args.timeframe,
             'initial_equity': args.initial_equity,
+            'impulse_max_candles': 20,
+            'impulse_min_distance': 0.001,
+            'base_max_retracement': 0.60,
         },
         'total_stats': total_stats,
         'per_symbol': per_symbol_stats,
