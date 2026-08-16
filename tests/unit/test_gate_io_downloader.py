@@ -49,6 +49,8 @@ class TestGateIODownloader:
         """تست تبدیل پاسخ معتبر"""
         downloader = self.get_downloader()
         
+        # شبیه‌سازی پاسخ Gate.io Futures
+        # [timestamp, volume, close, high, low, open]
         mock_response = [
             [1700000000, "100.5", "50000", "51000", "49000", "49500"],
             [1700003600, "101.2", "50100", "51100", "49100", "49600"],
@@ -86,19 +88,20 @@ class TestGateIODownloader:
         """تست پاسخ ناقص"""
         downloader = self.get_downloader()
         mock_response = [
-            [1700000000, "100.5", "50000", "51000", "49000"],
-            [1700003600, "101.2", "50100", "51100", "49100", "49600"],
+            [1700000000, "100.5", "50000", "51000", "49000"],  # ناقص
+            [1700003600, "101.2", "50100", "51100", "49100", "49600"],  # کامل
         ]
         
         candles = downloader._parse_response(mock_response)
         
-        assert len(candles) == 1
+        assert len(candles) == 1  # فقط کامل
         assert candles[0]['timestamp'] == 1700003600
     
     def test_fetch_ohlcv_pagination(self):
         """تست pagination"""
         downloader = self.get_downloader()
         
+        # Mock fetch_batch
         batch1 = [
             {'timestamp': 1000, 'open': 100, 'high': 101, 'low': 99, 'close': 100.5, 'volume': 10},
             {'timestamp': 4600, 'open': 100.5, 'high': 102, 'low': 100, 'close': 101, 'volume': 12},
@@ -128,6 +131,7 @@ class TestGateIODownloader:
             {'timestamp': 1000, 'open': 100, 'high': 101, 'low': 99, 'close': 100.5, 'volume': 10},
             {'timestamp': 4600, 'open': 100.5, 'high': 102, 'low': 100, 'close': 101, 'volume': 12},
         ]
+        # batch2 شامل duplicate از batch1
         batch2 = [
             {'timestamp': 4600, 'open': 100.5, 'high': 102, 'low': 100, 'close': 101, 'volume': 12},
             {'timestamp': 8200, 'open': 101, 'high': 103, 'low': 100.5, 'close': 102, 'volume': 15},
@@ -142,7 +146,7 @@ class TestGateIODownloader:
             end_timestamp=11800
         )
         
-        assert len(candles) == 3
+        assert len(candles) == 3  # نه 4
         assert len(set(c['timestamp'] for c in candles)) == 3
     
     def test_fetch_http_error(self):
