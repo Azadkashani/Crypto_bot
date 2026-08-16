@@ -45,13 +45,13 @@ class FTREngineConfig:
 
 @dataclass
 class PendingBaseState:
-    """وضعیت Pending Base — برای پیگیری Base در چند کندل"""
+    """وضعیت Pending Base"""
     break_key: tuple
     structure_break: StructureBreak
     displacement: DisplacementData
-    start_index: int  # اولین کندل Base
-    created_index: int  # کندلی که Impulse کامل شد
-    last_checked_index: int = 0
+    start_index: int
+    created_index: int
+    last_checked_index: int = -1  # -1 یعنی هنوز بررسی نشده
     is_complete: bool = False
     is_invalidated: bool = False
     invalid_reason: str = ""
@@ -59,10 +59,7 @@ class PendingBaseState:
 
 class FTREngine:
     """
-    موتور اصلی تشخیص FTR
-    
-    Pipeline:
-    Structure Break → Pending Impulse → Pending Base → FTR Zone → FTB
+    موتور اصلی تشخیص FTR — با Pending Base Tracking
     """
     
     def __init__(self, config: FTREngineConfig):
@@ -154,7 +151,6 @@ class FTREngine:
             if break_index is None:
                 continue
             
-            # تلاش برای Impulse
             displacement = self.impulse_detector.detect_impulse(
                 visible_ohlcv, break_index, structure_break.direction
             )
@@ -162,7 +158,7 @@ class FTREngine:
             if not displacement or not displacement.is_valid:
                 continue
             
-            # Impulse معتبر — ایجاد Pending Base
+            # Impulse معتبر — ایجاد یا به‌روزرسانی Pending Base
             if break_key not in self._pending_bases:
                 self._pending_bases[break_key] = PendingBaseState(
                     break_key=break_key,
@@ -170,20 +166,17 @@ class FTREngine:
                     displacement=displacement,
                     start_index=displacement.end_index + 1,
                     created_index=current_index,
-                    last_checked_index=current_index,
+                    last_checked_index=-1,  # هنوز بررسی نشده
                 )
+            else:
+                # به‌روزرسانی displacement (ممکن است Impulse گسترش یافته باشد)
+                self._pending_bases[break_key].displacement = displacement
         
         # ۴. پردازش Pending Bases — تلاش برای تکمیل Base
         for break_key, pending_base in list(self._pending_bases.items()):
             if break_key in self._processed_breaks:
                 del self._pending_bases[break_key]
                 continue
-            
-            # جلوگیری از بررسی تکراری در همان کندل
-            if pending_base.last_checked_index >= current_index:
-                continue
-            
-            pending_base.last_checked_index = current_index
             
             structure_break = pending_base.structure_break
             displacement = pending_base.displacement
@@ -193,8 +186,9 @@ class FTREngine:
             base = self.base_detector.detect_base(visible_ohlcv, displacement)
             
             if base is None or not base.is_valid:
-                # Base هنوز کامل نشده — بررسی انقضا
-                if current_index - pending_base.created_index > 30:
+                # Base هنوز کامل نشده
+                # بررسی انقضا
+                if current_index - pending_base.created_index > 50:
                     pending_base.is_invalidated = True
                     pending_base.invalid_reason = "BASE_TIMEOUT"
                     del self._pending_bases[break_key]
@@ -213,7 +207,6 @@ class FTREngine:
             )
             
             if zone and self.zone_constructor.validate_zone(zone):
-                # موفقیت
                 level.is_consumed = True
                 self._processed_breaks.add(break_key)
                 del self._pending_bases[break_key]
@@ -245,7 +238,6 @@ class FTREngine:
                 del self._active_zones[zone_id]
                 self.ftb_detector.remove_zone(zone_id)
                 del self._zone_creation_indices[zone_id]
-                result.add_diagnostic(f"Zone invalidated: {zone_id}")
                 continue
             
             ftb_event = self.ftb_detector.check_ftb(visible_ohlcv, current_index, zone)
@@ -273,7 +265,7 @@ class FTREngine:
     def get_pending_breaks(self) -> List[StructureBreak]:
         return list(self._pending_breaks.values())
     
-    def get_pending_bases(self) -> int:
+    def get_pending_bases_count(self) -> int:
         return len(self._pending_bases)
     
     def _make_break_key(self, structure_break: StructureBreak) -> tuple:
