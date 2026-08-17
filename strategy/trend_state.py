@@ -1,116 +1,45 @@
 """
-استراتژی Multi-Timeframe Pullback Trading
-4H روند اصلی + 1H تأیید + 5M ورود
+استراتژی Head and Shoulders Pattern
+تشخیص الگوی سر و شانه با تأیید حجم و تایمفریم بالاتر
 """
 
 import numpy as np
 import pandas as pd
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 import talib
 
 class TrendStateStrategy:
     """
-    استراتژی پولبک چند تایمفریمی
+    استراتژی الگوی سر و شانه
     """
     
     def __init__(self, config: Dict = None):
         self.config = {
-            # EMA
-            'ema_fast': 20,
-            'ema_mid': 50,
-            'ema_slow': 200,
+            # Swing Detection
+            'swing_lookback': 10,       # تعداد کندل برای تشخیص Swing
             
-            # ADX
-            'adx_len': 14,
-            'adx_trend_threshold': 20,
-            'adx_strong_threshold': 30,
-            
-            # RSI
-            'rsi_len': 14,
-            'rsi_oversold': 30,
-            'rsi_overbought': 70,
-            'rsi_neutral_low': 40,
-            'rsi_neutral_high': 60,
-            
-            # MACD
-            'macd_fast': 12,
-            'macd_slow': 26,
-            'macd_signal': 9,
+            # الگو
+            'min_shoulder_distance': 10,  # حداقل فاصله بین شانهها
+            'shoulder_height_tolerance': 0.10,  # تلورانس ۱۰٪
             
             # حجم
             'volume_ma_len': 50,
-            'volume_multiplier': 1.5,
+            'volume_breakout_multiplier': 1.5,  # حجم شکست
             
-            # Volatility
-            'atr_len': 14,
-            'atr_extreme_threshold': 3.0,  # ATR% بالای این = Extreme
+            # امتیاز
+            'min_score': 70,  # حداقل امتیاز ۷۰٪
             
             # مدیریت ریسک
+            'atr_len': 14,
             'atr_mult_sl': 2.0,
-            'atr_mult_tp1': 3.0,
-            'atr_mult_tp2': 5.0,
+            'atr_mult_tp': 4.0,
             'allow_short': True,
         }
         
         if config:
             self.config.update(config)
     
-    def calculate_ema(self, series: pd.Series, length: int) -> pd.Series:
-        return series.ewm(span=length, adjust=False).mean()
-    
-    def calculate_macd(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.Series, pd.Series]:
-        """محاسبه MACD"""
-        macd, signal, hist = talib.MACD(
-            df['close'],
-            fastperiod=self.config['macd_fast'],
-            slowperiod=self.config['macd_slow'],
-            signalperiod=self.config['macd_signal']
-        )
-        return macd, signal, hist
-    
-    def detect_trend_4h(self, df_4h: pd.DataFrame) -> str:
-        """
-        تشخیص روند در 4H
-        Returns: 'bullish', 'bearish', 'sideways'
-        """
-        if df_4h is None or len(df_4h) < 200:
-            return 'sideways'
-        
-        ema_20 = self.calculate_ema(df_4h['close'], 20)
-        ema_50 = self.calculate_ema(df_4h['close'], 50)
-        ema_200 = self.calculate_ema(df_4h['close'], 200)
-        
-        adx = talib.ADX(df_4h['high'], df_4h['low'], df_4h['close'], timeperiod=14)
-        
-        current_adx = adx.iloc[-1] if not pd.isna(adx.iloc[-1]) else 0
-        
-        # روند صعودی قوی
-        if ema_20.iloc[-1] > ema_50.iloc[-1] > ema_200.iloc[-1] and current_adx > self.config['adx_trend_threshold']:
-            return 'bullish'
-        
-        # روند نزولی قوی
-        if ema_20.iloc[-1] < ema_50.iloc[-1] < ema_200.iloc[-1] and current_adx > self.config['adx_trend_threshold']:
-            return 'bearish'
-        
-        return 'sideways'
-    
-    def detect_trend_1h(self, df_1h: pd.DataFrame) -> str:
-        """
-        تشخیص روند در 1H
-        """
-        if df_1h is None or len(df_1h) < 100:
-            return 'sideways'
-        
-        ema_20 = self.calculate_ema(df_1h['close'], 20)
-        ema_50 = self.calculate_ema(df_1h['close'], 50)
-        
-        if ema_20.iloc[-1] > ema_50.iloc[-1]:
-            return 'bullish'
-        elif ema_20.iloc[-1] < ema_50.iloc[-1]:
-            return 'bearish'
-        return 'sideways'
-    
-    def find_swing_points(self, df: pd.DataFrame, lookback: int = 5) -> Tuple[pd.Series, pd.Series]:
+    def find_swing_points(self, df: pd.DataFrame, lookback: int = 10) -> Tuple[pd.Series, pd.Series]:
         """
         پیدا کردن Swing High و Swing Low
         """
@@ -128,222 +57,280 @@ class TrendStateStrategy:
         
         return swing_high, swing_low
     
-    def detect_choch(self, df: pd.DataFrame, direction: str) -> pd.Series:
+    def find_head_shoulders_bearish(self, df: pd.DataFrame) -> Optional[Dict]:
         """
-        تشخیص CHOCH (Change of Character)
+        تشخیص الگوی سر و شانه سقف (Bearish)
+        
+        Returns:
+        --------
+        Dict or None
+            اطلاعات الگو شامل:
+            - left_shoulder_idx
+            - head_idx
+            - right_shoulder_idx
+            - neckline_level
+            - neckline_slope
+            - score
         """
-        swing_high, swing_low = self.find_swing_points(df)
+        swing_high, swing_low = self.find_swing_points(df, self.config['swing_lookback'])
         
-        choch = pd.Series(index=df.index, dtype=bool)
+        # استخراج Swing High ها
+        swing_high_indices = df.index[swing_high].tolist()
         
-        if direction == 'bullish':
-            # شکست آخرین Swing High
-            for i in range(1, len(df)):
-                if swing_low.iloc[i]:
-                    recent_high = df['high'].iloc[max(0, i-20):i].max()
-                    if df['close'].iloc[i] > recent_high:
-                        choch.iloc[i] = True
-        else:
-            # شکست آخرین Swing Low
-            for i in range(1, len(df)):
-                if swing_high.iloc[i]:
-                    recent_low = df['low'].iloc[max(0, i-20):i].min()
-                    if df['close'].iloc[i] < recent_low:
-                        choch.iloc[i] = True
+        if len(swing_high_indices) < 3:
+            return None
         
-        return choch
+        # بررسی ترکیبهای سهگانه
+        for i in range(len(swing_high_indices) - 2):
+            left_idx = swing_high_indices[i]
+            head_idx = swing_high_indices[i+1]
+            right_idx = swing_high_indices[i+2]
+            
+            left_pos = df.index.get_loc(left_idx)
+            head_pos = df.index.get_loc(head_idx)
+            right_pos = df.index.get_loc(right_idx)
+            
+            # فاصله بین شانهها
+            if right_pos - left_pos < self.config['min_shoulder_distance']:
+                continue
+            
+            left_high = df['high'].loc[left_idx]
+            head_high = df['high'].loc[head_idx]
+            right_high = df['high'].loc[right_idx]
+            
+            # سر باید بالاتر از هر دو شانه باشد
+            if head_high <= left_high or head_high <= right_high:
+                continue
+            
+            # شانهها باید تقریباً همارتفاع باشند
+            shoulder_diff = abs(left_high - right_high) / head_high
+            if shoulder_diff > self.config['shoulder_height_tolerance']:
+                continue
+            
+            # پیدا کردن کف بین شانه چپ و سر
+            left_to_head = df.iloc[left_pos:head_pos+1]
+            neck_left = left_to_head['low'].min()
+            
+            # پیدا کردن کف بین سر و شانه راست
+            head_to_right = df.iloc[head_pos:right_pos+1]
+            neck_right = head_to_right['low'].min()
+            
+            # خط گردن
+            neckline_level = (neck_left + neck_right) / 2
+            neckline_slope = (neck_right - neck_left) / (right_pos - left_pos)
+            
+            # محاسبه امتیاز
+            score = self.score_head_shoulders_bearish(
+                df, left_high, head_high, right_high, 
+                neck_left, neck_right, left_pos, head_pos, right_pos
+            )
+            
+            if score >= self.config['min_score']:
+                return {
+                    'type': 'bearish',
+                    'left_shoulder_idx': left_pos,
+                    'head_idx': head_pos,
+                    'right_shoulder_idx': right_pos,
+                    'left_shoulder_price': left_high,
+                    'head_price': head_high,
+                    'right_shoulder_price': right_high,
+                    'neckline_level': neckline_level,
+                    'neckline_slope': neckline_slope,
+                    'score': score,
+                }
+        
+        return None
     
-    def detect_bos(self, df: pd.DataFrame, direction: str) -> pd.Series:
+    def find_head_shoulders_bullish(self, df: pd.DataFrame) -> Optional[Dict]:
         """
-        تشخیص BOS (Break of Structure)
+        تشخیص الگوی سر و شانه کف (Bullish)
         """
-        swing_high, swing_low = self.find_swing_points(df)
+        swing_high, swing_low = self.find_swing_points(df, self.config['swing_lookback'])
         
-        bos = pd.Series(index=df.index, dtype=bool)
+        swing_low_indices = df.index[swing_low].tolist()
         
-        if direction == 'bullish':
-            for i in range(1, len(df)):
-                if swing_low.iloc[i]:
-                    prev_high = df['high'].iloc[max(0, i-30):i].max()
-                    if df['high'].iloc[i] > prev_high:
-                        bos.iloc[i] = True
-        else:
-            for i in range(1, len(df)):
-                if swing_high.iloc[i]:
-                    prev_low = df['low'].iloc[max(0, i-30):i].min()
-                    if df['low'].iloc[i] < prev_low:
-                        bos.iloc[i] = True
+        if len(swing_low_indices) < 3:
+            return None
         
-        return bos
+        for i in range(len(swing_low_indices) - 2):
+            left_idx = swing_low_indices[i]
+            head_idx = swing_low_indices[i+1]
+            right_idx = swing_low_indices[i+2]
+            
+            left_pos = df.index.get_loc(left_idx)
+            head_pos = df.index.get_loc(head_idx)
+            right_pos = df.index.get_loc(right_idx)
+            
+            if right_pos - left_pos < self.config['min_shoulder_distance']:
+                continue
+            
+            left_low = df['low'].loc[left_idx]
+            head_low = df['low'].loc[head_idx]
+            right_low = df['low'].loc[right_idx]
+            
+            # سر باید پایینتر از هر دو شانه باشد
+            if head_low >= left_low or head_low >= right_low:
+                continue
+            
+            # شانهها باید تقریباً همارتفاع باشند
+            shoulder_diff = abs(left_low - right_low) / head_low
+            if shoulder_diff > self.config['shoulder_height_tolerance']:
+                continue
+            
+            # پیدا کردن سقف بین شانه چپ و سر
+            left_to_head = df.iloc[left_pos:head_pos+1]
+            neck_left = left_to_head['high'].max()
+            
+            # پیدا کردن سقف بین سر و شانه راست
+            head_to_right = df.iloc[head_pos:right_pos+1]
+            neck_right = head_to_right['high'].max()
+            
+            neckline_level = (neck_left + neck_right) / 2
+            neckline_slope = (neck_right - neck_left) / (right_pos - left_pos)
+            
+            score = self.score_head_shoulders_bullish(
+                df, left_low, head_low, right_low,
+                neck_left, neck_right, left_pos, head_pos, right_pos
+            )
+            
+            if score >= self.config['min_score']:
+                return {
+                    'type': 'bullish',
+                    'left_shoulder_idx': left_pos,
+                    'head_idx': head_pos,
+                    'right_shoulder_idx': right_pos,
+                    'left_shoulder_price': left_low,
+                    'head_price': head_low,
+                    'right_shoulder_price': right_low,
+                    'neckline_level': neckline_level,
+                    'neckline_slope': neckline_slope,
+                    'score': score,
+                }
+        
+        return None
     
-    def calculate_signal_score(self, conditions: Dict) -> float:
-        """
-        محاسبه امتیاز سیگنال (0 تا 100)
-        """
-        weights = {
-            'trend_alignment': 0.20,
-            'momentum': 0.20,
-            'structure': 0.20,
-            'volume': 0.15,
-            'volatility': 0.15,
-            'pullback_quality': 0.10,
-        }
+    def score_head_shoulders_bearish(self, df, left_high, head_high, right_high, 
+                                      neck_left, neck_right, left_pos, head_pos, right_pos):
+        """امتیازدهی الگوی سقف"""
+        score = 0
         
-        scores = {}
+        # تقارن شانهها (۲۵ نمره)
+        symmetry = 1 - abs(left_high - right_high) / head_high
+        score += symmetry * 25
         
-        # هم‌جهتی روند
-        if conditions.get('trend_4h') == conditions.get('trend_1h'):
-            scores['trend_alignment'] = 100
+        # ارتفاع سر نسبت به شانهها (۲۰ نمره)
+        head_height = (head_high - max(left_high, right_high)) / head_high
+        score += min(head_height * 200, 20)
+        
+        # شیب خط گردن (۱۵ نمره)
+        neckline_flatness = 1 - abs(neck_right - neck_left) / neck_left
+        score += max(0, neckline_flatness) * 15
+        
+        # حجم شانه چپ باید بیشتر از شانه راست باشد (۲۰ نمره)
+        left_volume = df['volume'].iloc[left_pos-3:left_pos+3].mean()
+        right_volume = df['volume'].iloc[right_pos-3:right_pos+3].mean()
+        if left_volume > right_volume:
+            score += 20
         else:
-            scores['trend_alignment'] = 0
+            score += 10
         
-        # Momentum
-        scores['momentum'] = conditions.get('momentum_score', 0)
+        # فاصله مناسب بین شانهها (۲۰ نمره)
+        distance = right_pos - left_pos
+        ideal_distance = 40  # حدود ۴۰ کندل
+        distance_score = max(0, 1 - abs(distance - ideal_distance) / ideal_distance)
+        score += distance_score * 20
         
-        # Structure
-        if conditions.get('choch') and conditions.get('bos'):
-            scores['structure'] = 100
-        elif conditions.get('choch') or conditions.get('bos'):
-            scores['structure'] = 60
-        else:
-            scores['structure'] = 0
-        
-        # Volume
-        scores['volume'] = 100 if conditions.get('volume_strong') else 40
-        
-        # Volatility
-        scores['volatility'] = conditions.get('volatility_score', 50)
-        
-        # Pullback Quality
-        scores['pullback_quality'] = conditions.get('pullback_score', 50)
-        
-        total = sum(scores[k] * weights[k] for k in weights)
-        return total
+        return score
     
-    def generate_signals(self, df_5m: pd.DataFrame, df_1h: pd.DataFrame = None, df_4h: pd.DataFrame = None) -> pd.DataFrame:
+    def score_head_shoulders_bullish(self, df, left_low, head_low, right_low,
+                                      neck_left, neck_right, left_pos, head_pos, right_pos):
+        """امتیازدهی الگوی کف"""
+        score = 0
+        
+        # تقارن شانهها (۲۵ نمره)
+        symmetry = 1 - abs(left_low - right_low) / head_low
+        score += symmetry * 25
+        
+        # عمق سر نسبت به شانهها (۲۰ نمره)
+        head_depth = (min(left_low, right_low) - head_low) / head_low
+        score += min(head_depth * 200, 20)
+        
+        # شیب خط گردن (۱۵ نمره)
+        neckline_flatness = 1 - abs(neck_right - neck_left) / neck_left
+        score += max(0, neckline_flatness) * 15
+        
+        # حجم شانه چپ باید بیشتر از شانه راست باشد (۲۰ نمره)
+        left_volume = df['volume'].iloc[left_pos-3:left_pos+3].mean()
+        right_volume = df['volume'].iloc[right_pos-3:right_pos+3].mean()
+        if left_volume > right_volume:
+            score += 20
+        else:
+            score += 10
+        
+        # فاصله مناسب (۲۰ نمره)
+        distance = right_pos - left_pos
+        ideal_distance = 40
+        distance_score = max(0, 1 - abs(distance - ideal_distance) / ideal_distance)
+        score += distance_score * 20
+        
+        return score
+    
+    def generate_signals(self, df: pd.DataFrame, df_1h: pd.DataFrame = None) -> pd.DataFrame:
         """
-        تولید سیگنال‌ها
+        تولید سیگنالها
         """
-        df = df_5m.copy()
-        
-        # ============ تشخیص روند ============
-        trend_4h = self.detect_trend_4h(df_4h) if df_4h is not None else 'sideways'
-        trend_1h = self.detect_trend_1h(df_1h) if df_1h is not None else 'sideways'
-        
-        # اگر 4H روند مشخصی نداشت
-        if trend_4h == 'sideways':
-            df['bull_signal'] = False
-            df['bear_signal'] = False
-            df['signal_score'] = 0
-            return df
-        
-        # اگر 1H با 4H هم‌جهت نبود
-        if trend_4h != trend_1h:
-            df['bull_signal'] = False
-            df['bear_signal'] = False
-            df['signal_score'] = 0
-            return df
-        
-        # ============ اندیکاتورها ============
-        # RSI
-        df['rsi'] = talib.RSI(df['close'], timeperiod=self.config['rsi_len'])
-        
-        # MACD
-        df['macd'], df['macd_signal'], df['macd_hist'] = self.calculate_macd(df)
+        # حجم
+        df['volume_ma'] = df['volume'].rolling(window=self.config['volume_ma_len']).mean()
+        df['volume_breakout'] = df['volume'] > df['volume_ma'] * self.config['volume_breakout_multiplier']
         
         # ATR
         df['atr'] = talib.ATR(df['high'], df['low'], df['close'], timeperiod=self.config['atr_len'])
-        df['atr_pct'] = df['atr'] / df['close'] * 100
         
-        # حجم
-        df['volume_ma'] = df['volume'].rolling(window=self.config['volume_ma_len']).mean()
-        df['volume_strong'] = df['volume'] > df['volume_ma'] * self.config['volume_multiplier']
+        # تأیید تایمفریم بالاتر
+        if df_1h is not None and len(df_1h) > 0:
+            ema_20_1h = df_1h['close'].ewm(span=20).mean()
+            ema_50_1h = df_1h['close'].ewm(span=50).mean()
+            hourly_bullish = ema_20_1h.iloc[-1] > ema_50_1h.iloc[-1]
+            hourly_bearish = ema_20_1h.iloc[-1] < ema_50_1h.iloc[-1]
+        else:
+            hourly_bullish = True
+            hourly_bearish = True
         
-        # ============ ساختار ============
-        swing_high, swing_low = self.find_swing_points(df)
-        
-        choch_bull = self.detect_choch(df, 'bullish')
-        choch_bear = self.detect_choch(df, 'bearish')
-        bos_bull = self.detect_bos(df, 'bullish')
-        bos_bear = self.detect_bos(df, 'bearish')
-        
-        # ============ تولید سیگنال ============
-        df['signal_score'] = 0.0
+        # سیگنالها
         df['bull_signal'] = False
         df['bear_signal'] = False
+        df['pattern_score'] = 0.0
+        df['pattern_type'] = ''
         
+        # بررسی الگو در هر کندل
         for i in range(50, len(df)):
-            # شرایط LONG
-            if trend_4h == 'bullish' and trend_1h == 'bullish':
-                # Pullback: قیمت پایین‌تر از EMA20
-                pullback = df['low'].iloc[i] < df['close'].ewm(span=20).mean().iloc[i]
-                
-                # Momentum Recovery
-                rsi_recovering = df['rsi'].iloc[i] > df['rsi'].iloc[i-1] and df['rsi'].iloc[i] > 30
-                macd_turning = df['macd_hist'].iloc[i] > df['macd_hist'].iloc[i-1]
-                
-                # Structure
-                structure_ok = choch_bull.iloc[i] or bos_bull.iloc[i]
-                
-                # Volume
-                volume_ok = df['volume_strong'].iloc[i]
-                
-                # Volatility
-                vol_ok = df['atr_pct'].iloc[i] < self.config['atr_extreme_threshold']
-                
-                if pullback and rsi_recovering and structure_ok and volume_ok and vol_ok:
-                    conditions = {
-                        'trend_4h': 'bullish',
-                        'trend_1h': 'bullish',
-                        'momentum_score': min(100, df['rsi'].iloc[i]),
-                        'choch': choch_bull.iloc[i],
-                        'bos': bos_bull.iloc[i],
-                        'volume_strong': volume_ok,
-                        'volatility_score': 100 - df['atr_pct'].iloc[i] * 30,
-                        'pullback_score': 70 if pullback else 0,
-                    }
-                    score = self.calculate_signal_score(conditions)
-                    df.loc[df.index[i], 'signal_score'] = score
-                    df.loc[df.index[i], 'bull_signal'] = score >= 70
+            # بررسی الگوی سر و شانه روی دادههای تا کندل i
+            df_window = df.iloc[:i+1]
             
-            # شرایط SHORT
-            if trend_4h == 'bearish' and trend_1h == 'bearish':
-                # Pullback: قیمت بالاتر از EMA20
-                pullback = df['high'].iloc[i] > df['close'].ewm(span=20).mean().iloc[i]
-                
-                # Momentum Recovery
-                rsi_recovering = df['rsi'].iloc[i] < df['rsi'].iloc[i-1] and df['rsi'].iloc[i] < 70
-                macd_turning = df['macd_hist'].iloc[i] < df['macd_hist'].iloc[i-1]
-                
-                # Structure
-                structure_ok = choch_bear.iloc[i] or bos_bear.iloc[i]
-                
-                # Volume
-                volume_ok = df['volume_strong'].iloc[i]
-                
-                # Volatility
-                vol_ok = df['atr_pct'].iloc[i] < self.config['atr_extreme_threshold']
-                
-                if pullback and rsi_recovering and structure_ok and volume_ok and vol_ok:
-                    conditions = {
-                        'trend_4h': 'bearish',
-                        'trend_1h': 'bearish',
-                        'momentum_score': min(100, 100 - df['rsi'].iloc[i]),
-                        'choch': choch_bear.iloc[i],
-                        'bos': bos_bear.iloc[i],
-                        'volume_strong': volume_ok,
-                        'volatility_score': 100 - df['atr_pct'].iloc[i] * 30,
-                        'pullback_score': 70 if pullback else 0,
-                    }
-                    score = self.calculate_signal_score(conditions)
-                    df.loc[df.index[i], 'signal_score'] = score
-                    df.loc[df.index[i], 'bear_signal'] = score >= 70
+            # الگوی سقف (Bearish)
+            bearish_pattern = self.find_head_shoulders_bearish(df_window)
+            if bearish_pattern and hourly_bearish:
+                # شکست خط گردن
+                neckline = bearish_pattern['neckline_level']
+                if df['close'].iloc[i] < neckline and df['volume_breakout'].iloc[i]:
+                    df.loc[df.index[i], 'bear_signal'] = True
+                    df.loc[df.index[i], 'pattern_score'] = bearish_pattern['score']
+                    df.loc[df.index[i], 'pattern_type'] = 'head_shoulders_bearish'
+            
+            # الگوی کف (Bullish)
+            bullish_pattern = self.find_head_shoulders_bullish(df_window)
+            if bullish_pattern and hourly_bullish:
+                neckline = bullish_pattern['neckline_level']
+                if df['close'].iloc[i] > neckline and df['volume_breakout'].iloc[i]:
+                    df.loc[df.index[i], 'bull_signal'] = True
+                    df.loc[df.index[i], 'pattern_score'] = bullish_pattern['score']
+                    df.loc[df.index[i], 'pattern_type'] = 'head_shoulders_bullish'
         
-        # ============ حد ضرر و سود ============
+        # حد ضرر و سود
         df['long_stop'] = df['close'] - df['atr'] * self.config['atr_mult_sl']
         df['short_stop'] = df['close'] + df['atr'] * self.config['atr_mult_sl']
-        df['long_tp'] = df['close'] + df['atr'] * self.config['atr_mult_tp1']
-        df['short_tp'] = df['close'] - df['atr'] * self.config['atr_mult_tp1']
-        df['rr_ratio'] = self.config['atr_mult_tp1'] / self.config['atr_mult_sl']
+        df['long_tp'] = df['close'] + df['atr'] * self.config['atr_mult_tp']
+        df['short_tp'] = df['close'] - df['atr'] * self.config['atr_mult_tp']
+        df['rr_ratio'] = self.config['atr_mult_tp'] / self.config['atr_mult_sl']
         
         return df
