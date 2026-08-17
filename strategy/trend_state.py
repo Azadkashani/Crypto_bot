@@ -1,245 +1,113 @@
 """
-استراتژی Trend State - نسخه Python
-تبدیل دقیق از Pine Script v6 به Python
+استراتژی EMA + RSI Multi-Timeframe
+سیگنال خرید: EMA20 > EMA200 در ۱h + RSI از زیر ۳۰ به بالا در ۵m + حجم بالا
+سیگنال فروش: EMA20 < EMA200 در ۱h + RSI از بالای ۷۰ به پایین در ۵m + حجم بالا
 """
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, Optional
 import talib
 
 class TrendStateStrategy:
     """
-    استراتژی Trend State با فیلترهای بهبود یافته
+    استراتژی ترکیبی EMA و RSI با تایید حجم
     """
     
     def __init__(self, config: Dict = None):
         """
         مقداردهی اولیه استراتژی
-        
-        Parameters:
-        -----------
-        config : Dict
-            تنظیمات استراتژی
         """
-        # تنظیمات پیش‌فرض
         self.config = {
-            # هسته فیلتر
-            'length': 14,
-            'multiplier': 2.5,
-            'offset': 0.5,
-            'sigma': 1.0,
-            'source_type': 'custom',
+            # EMA
+            'ema_fast': 20,
+            'ema_slow': 200,
             
-            # فیلتر روند
-            'use_trend_filter': True,
-            'trend_ma_len': 200,
+            # RSI
+            'rsi_len': 14,
+            'rsi_oversold': 30,
+            'rsi_overbought': 70,
             
-            # فیلتر ADX (سختگیرانه‌تر)
-            'use_adx_filter': True,
-            'adx_len': 14,
-            'adx_threshold': 30,    # از 20 به 30
+            # حجم
+            'volume_ma_len': 50,
+            'volume_multiplier': 1.5,  # حجم باید ۱.۵ برابر میانگین باشد
             
-            # فیلتر نوسان
-            'use_vol_filter': True,
-            'vol_len': 50,
-            'vol_ratio_min': 0.8,
-            'vol_ratio_max': 1.5,
-            
-            # فیلتر Bollinger Squeeze
-            'use_bb_filter': True,
-            'bb_len': 20,
-            'bb_mult': 2.0,
-            'bb_squeeze_threshold': 0.8,
-            
-            # مدیریت ریسک (حد ضرر دورتر)
+            # مدیریت ریسک
             'use_atr_stop': True,
             'atr_len': 14,
-            'atr_mult_sl': 3.5,     # از 2.5 به 3.5
+            'atr_mult_sl': 3.5,
             'use_atr_tp': True,
             'atr_mult_tp': 4.0,
             'allow_short': True,
         }
         
-        # به‌روزرسانی با تنظیمات کاربر
         if config:
             self.config.update(config)
-        
-        # متغیرهای حالت
-        self.filter_line = None
-        self.trend = None
-        
-    def calculate_source(self, df: pd.DataFrame) -> pd.Series:
-        """
-        محاسبه منبع قیمت بر اساس نوع انتخاب شده
-        """
-        source_type = self.config['source_type']
-        
-        if source_type == 'close':
-            return df['close']
-        elif source_type == 'hl2':
-            return (df['high'] + df['low']) / 2
-        elif source_type == 'hlc3':
-            return (df['high'] + df['low'] + df['close']) / 3
-        elif source_type == 'ohlc4':
-            return (df['open'] + df['high'] + df['low'] + df['close']) / 4
-        elif source_type == 'hlcc4':
-            return (df['high'] + df['low'] + 2 * df['close']) / 4
-        elif source_type == 'occ3':
-            return (df['open'] + 2 * df['close']) / 3
-        else:  # custom
-            return (df['open'] + 2 * df['high'] + 2 * df['low'] + 2 * df['close']) / 7
     
-    def alma(self, series: pd.Series, length: int, offset: float, sigma: float) -> pd.Series:
+    def calculate_ema(self, series: pd.Series, length: int) -> pd.Series:
+        """محاسبه EMA"""
+        return series.ewm(span=length, adjust=False).mean()
+    
+    def generate_signals(self, df: pd.DataFrame, df_1h: pd.DataFrame = None) -> pd.DataFrame:
         """
-        محاسبه ALMA (Arnaud Legoux Moving Average)
+        تولید سیگنالهای معاملاتی
+        
+        Parameters:
+        -----------
+        df : pd.DataFrame
+            دادههای تایمفریم ۵ دقیقه
+        df_1h : pd.DataFrame
+            دادههای تایمفریم ۱ ساعته (برای فیلتر روند)
+            
+        Returns:
+        --------
+        pd.DataFrame
+            دیتافریم با سیگنالها
         """
-        m = offset * (length - 1)
-        s = length / sigma
+        # ============ فیلتر روند ۱ ساعته ============
+        if df_1h is not None and len(df_1h) > 0:
+            # محاسبه EMA روی ۱ ساعته
+            ema_fast_1h = self.calculate_ema(df_1h['close'], self.config['ema_fast'])
+            ema_slow_1h = self.calculate_ema(df_1h['close'], self.config['ema_slow'])
+            
+            # وضعیت روند ۱ ساعته
+            hourly_bullish = ema_fast_1h.iloc[-1] > ema_slow_1h.iloc[-1]
+            hourly_bearish = ema_fast_1h.iloc[-1] < ema_slow_1h.iloc[-1]
+        else:
+            # اگر داده ۱ ساعته نبود، فقط ۵ دقیقه
+            hourly_bullish = True
+            hourly_bearish = True
         
-        weights = np.zeros(length)
-        for i in range(length):
-            weights[i] = np.exp(-0.5 * ((i - m) / s) ** 2)
+        # ============ محاسبه RSI روی ۵ دقیقه ============
+        df['rsi'] = talib.RSI(df['close'], timeperiod=self.config['rsi_len'])
         
-        weights = weights / weights.sum()
+        # ============ محاسبه حجم ============
+        df['volume_ma'] = df['volume'].rolling(window=self.config['volume_ma_len']).mean()
+        df['volume_high'] = df['volume'] > df['volume_ma'] * self.config['volume_multiplier']
         
-        alma_values = series.rolling(window=length).apply(
-            lambda x: np.sum(x * weights), raw=True
+        # ============ سیگنال خرید ============
+        # RSI از زیر ۳۰ به بالا حرکت کرده
+        rsi_cross_up = (df['rsi'] > self.config['rsi_oversold']) & (df['rsi'].shift(1) <= self.config['rsi_oversold'])
+        
+        # سیگنال خرید کامل
+        df['bull_signal'] = (
+            hourly_bullish &          # روند ۱h صعودی
+            rsi_cross_up &            # RSI از زیر ۳۰ عبور کرده
+            df['volume_high']         # حجم بالا
         )
         
-        return alma_values
-    
-    def calculate_trend_state(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        محاسبه هسته فیلتر Trend State
-        """
-        src = self.calculate_source(df)
+        # ============ سیگنال فروش ============
+        # RSI از بالای ۷۰ به پایین حرکت کرده
+        rsi_cross_down = (df['rsi'] < self.config['rsi_overbought']) & (df['rsi'].shift(1) >= self.config['rsi_overbought'])
         
-        movement = src.diff().abs()
-        
-        smooth_move = self.alma(
-            movement, 
-            self.config['length'], 
-            self.config['offset'], 
-            self.config['sigma']
+        # سیگنال فروش کامل
+        df['bear_signal'] = (
+            hourly_bearish &          # روند ۱h نزولی
+            rsi_cross_down &          # RSI از بالای ۷۰ عبور کرده
+            df['volume_high']         # حجم بالا
         )
         
-        adaptive_range = smooth_move * self.config['multiplier']
-        
-        filter_line = pd.Series(index=df.index, dtype=float)
-        
-        filter_line.iloc[0] = src.iloc[0] if not pd.isna(src.iloc[0]) else 0
-        
-        for i in range(1, len(df)):
-            prev_filter = filter_line.iloc[i-1]
-            
-            if pd.isna(prev_filter) or pd.isna(adaptive_range.iloc[i]):
-                filter_line.iloc[i] = src.iloc[i]
-                continue
-            
-            upper = prev_filter + adaptive_range.iloc[i]
-            lower = prev_filter - adaptive_range.iloc[i]
-            
-            if src.iloc[i] > upper:
-                filter_line.iloc[i] = src.iloc[i] - adaptive_range.iloc[i]
-            elif src.iloc[i] < lower:
-                filter_line.iloc[i] = src.iloc[i] + adaptive_range.iloc[i]
-            else:
-                filter_line.iloc[i] = prev_filter
-        
-        trend = pd.Series(index=df.index, dtype=int)
-        trend.iloc[0] = 0
-        
-        for i in range(1, len(df)):
-            if filter_line.iloc[i] > filter_line.iloc[i-1]:
-                trend.iloc[i] = 1
-            elif filter_line.iloc[i] < filter_line.iloc[i-1]:
-                trend.iloc[i] = -1
-            else:
-                trend.iloc[i] = trend.iloc[i-1] if not pd.isna(trend.iloc[i-1]) else 0
-        
-        df['filter_line'] = filter_line
-        df['trend'] = trend
-        df['adaptive_range'] = adaptive_range
-        df['smooth_move'] = smooth_move
-        
-        return df
-    
-    def calculate_filters(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        محاسبه تمام فیلترهای کیفیت سیگنال
-        """
-        # 1. EMA 200
-        if self.config['use_trend_filter']:
-            df['trend_ma'] = talib.EMA(df['close'], timeperiod=self.config['trend_ma_len'])
-            df['trend_ok_long'] = df['close'] > df['trend_ma']
-            df['trend_ok_short'] = df['close'] < df['trend_ma']
-        else:
-            df['trend_ok_long'] = True
-            df['trend_ok_short'] = True
-        
-        # 2. ADX + DI
-        if self.config['use_adx_filter']:
-            df['adx'] = talib.ADX(
-                df['high'], 
-                df['low'], 
-                df['close'], 
-                timeperiod=self.config['adx_len']
-            )
-            df['di_plus'] = talib.PLUS_DI(
-                df['high'], 
-                df['low'], 
-                df['close'], 
-                timeperiod=self.config['adx_len']
-            )
-            df['di_minus'] = talib.MINUS_DI(
-                df['high'], 
-                df['low'], 
-                df['close'], 
-                timeperiod=self.config['adx_len']
-            )
-            
-            df['adx_ok'] = df['adx'] > self.config['adx_threshold']
-            df['adx_trend_ok_long'] = df['adx_ok'] & (df['di_plus'] > df['di_minus'])
-            df['adx_trend_ok_short'] = df['adx_ok'] & (df['di_minus'] > df['di_plus'])
-        else:
-            df['adx_trend_ok_long'] = True
-            df['adx_trend_ok_short'] = True
-        
-        # 3. Volatility Filter
-        if self.config['use_vol_filter']:
-            df['avg_range'] = df['adaptive_range'].rolling(
-                window=self.config['vol_len']
-            ).mean()
-            
-            df['vol_ratio'] = df['adaptive_range'] / df['avg_range']
-            
-            df['vol_ok'] = (
-                (df['vol_ratio'] >= self.config['vol_ratio_min']) & 
-                (df['vol_ratio'] <= self.config['vol_ratio_max'])
-            )
-        else:
-            df['vol_ok'] = True
-        
-        # 4. Bollinger Squeeze
-        if self.config['use_bb_filter']:
-            df['bb_upper'], df['bb_middle'], df['bb_lower'] = talib.BBANDS(
-                df['close'],
-                timeperiod=self.config['bb_len'],
-                nbdevup=self.config['bb_mult'],
-                nbdevdn=self.config['bb_mult'],
-                matype=0
-            )
-            
-            df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle']
-            df['bb_width_avg'] = df['bb_width'].rolling(window=self.config['bb_len']).mean()
-            
-            df['bb_squeeze'] = df['bb_width'] < df['bb_width_avg'] * self.config['bb_squeeze_threshold']
-            df['bb_ok'] = ~df['bb_squeeze']
-        else:
-            df['bb_ok'] = True
-        
-        # 5. ATR برای مدیریت ریسک
+        # ============ مدیریت ریسک با ATR ============
         if self.config['use_atr_stop'] or self.config['use_atr_tp']:
             df['atr'] = talib.ATR(
                 df['high'], 
@@ -248,43 +116,6 @@ class TrendStateStrategy:
                 timeperiod=self.config['atr_len']
             )
         
-        return df
-    
-    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        تولید سیگنال‌های معاملاتی با تمام فیلترها
-        """
-        # محاسبه هسته فیلتر
-        df = self.calculate_trend_state(df)
-        
-        # محاسبه فیلترها
-        df = self.calculate_filters(df)
-        
-        # تشخیص تغییر روند
-        df['trend_change'] = df['trend'].diff()
-        
-        # سیگنال‌های خام
-        df['raw_bull'] = (df['trend_change'] > 0) & (df['trend'] == 1)
-        df['raw_bear'] = (df['trend_change'] < 0) & (df['trend'] == -1)
-        
-        # اعمال فیلترها
-        df['bull_signal'] = (
-            df['raw_bull'] & 
-            df['trend_ok_long'] & 
-            df['adx_trend_ok_long'] & 
-            df['vol_ok'] & 
-            df['bb_ok']
-        )
-        
-        df['bear_signal'] = (
-            df['raw_bear'] & 
-            df['trend_ok_short'] & 
-            df['adx_trend_ok_short'] & 
-            df['vol_ok'] & 
-            df['bb_ok']
-        )
-        
-        # محاسبه حد ضرر و سود
         if self.config['use_atr_stop']:
             df['long_stop'] = df['close'] - df['atr'] * self.config['atr_mult_sl']
             df['short_stop'] = df['close'] + df['atr'] * self.config['atr_mult_sl']
@@ -293,48 +124,8 @@ class TrendStateStrategy:
             df['long_tp'] = df['close'] + df['atr'] * self.config['atr_mult_tp']
             df['short_tp'] = df['close'] - df['atr'] * self.config['atr_mult_tp']
         
-        # محاسبه نسبت ریسک به ریوارد
+        # نسبت ریسک به ریوارد
         if self.config['use_atr_stop'] and self.config['use_atr_tp']:
             df['rr_ratio'] = self.config['atr_mult_tp'] / self.config['atr_mult_sl']
         
         return df
-    
-    def get_signal_info(self, df: pd.DataFrame, index: int) -> Dict:
-        """
-        دریافت اطلاعات کامل سیگنال در یک نقطه خاص
-        """
-        if index < 0 or index >= len(df):
-            return None
-        
-        row = df.iloc[index]
-        
-        signal_info = {
-            'timestamp': df.index[index],
-            'close': row['close'],
-            'trend': row['trend'],
-            'filter_line': row['filter_line'],
-            'adaptive_range': row['adaptive_range'],
-            'bull_signal': row['bull_signal'],
-            'bear_signal': row['bear_signal'],
-        }
-        
-        if 'trend_ma' in df.columns:
-            signal_info['trend_ma'] = row['trend_ma']
-        if 'adx' in df.columns:
-            signal_info['adx'] = row['adx']
-            signal_info['di_plus'] = row['di_plus']
-            signal_info['di_minus'] = row['di_minus']
-        if 'vol_ratio' in df.columns:
-            signal_info['vol_ratio'] = row['vol_ratio']
-        if 'bb_width' in df.columns:
-            signal_info['bb_width'] = row['bb_width']
-            signal_info['bb_squeeze'] = row['bb_squeeze']
-        
-        if 'long_stop' in df.columns:
-            signal_info['long_stop'] = row['long_stop']
-            signal_info['long_tp'] = row['long_tp']
-        if 'short_stop' in df.columns:
-            signal_info['short_stop'] = row['short_stop']
-            signal_info['short_tp'] = row['short_tp']
-        
-        return signal_info
