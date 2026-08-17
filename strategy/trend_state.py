@@ -32,12 +32,12 @@ class TrendStateStrategy:
             'volume_ma_len': 50,
             'volume_multiplier': 1.5,  # حجم باید ۱.۵ برابر میانگین باشد
             
-            # مدیریت ریسک
+            # مدیریت ریسک (R:R = 2.0)
             'use_atr_stop': True,
             'atr_len': 14,
-            'atr_mult_sl': 3.5,
+            'atr_mult_sl': 2.5,     # حد ضرر
             'use_atr_tp': True,
-            'atr_mult_tp': 4.0,
+            'atr_mult_tp': 5.0,     # حد سود (R:R = 2.0)
             'allow_short': True,
         }
         
@@ -50,19 +50,19 @@ class TrendStateStrategy:
     
     def generate_signals(self, df: pd.DataFrame, df_1h: pd.DataFrame = None) -> pd.DataFrame:
         """
-        تولید سیگنالهای معاملاتی
+        تولید سیگنال‌های معاملاتی
         
         Parameters:
         -----------
         df : pd.DataFrame
-            دادههای تایمفریم ۵ دقیقه
+            داده‌های تایم‌فریم ۵ دقیقه
         df_1h : pd.DataFrame
-            دادههای تایمفریم ۱ ساعته (برای فیلتر روند)
+            داده‌های تایم‌فریم ۱ ساعته (برای فیلتر روند)
             
         Returns:
         --------
         pd.DataFrame
-            دیتافریم با سیگنالها
+            دیتافریم با سیگنال‌ها
         """
         # ============ فیلتر روند ۱ ساعته ============
         if df_1h is not None and len(df_1h) > 0:
