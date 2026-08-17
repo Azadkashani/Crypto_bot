@@ -22,11 +22,11 @@ class TrendStateStrategy:
         config : Dict
             تنظیمات استراتژی (همان STRATEGY_CONFIG از settings.py)
         """
-        # تنظیمات پیش‌فرض (بهینه شده)
+        # تنظیمات پیش‌فرض
         self.config = {
             # هسته فیلتر
-            'length': 20,           # از 14 به 20 - فیلتر بهتر نویز
-            'multiplier': 3.0,      # از 2.5 به 3.0 - محدوده بزرگتر
+            'length': 14,
+            'multiplier': 2.5,
             'offset': 0.5,
             'sigma': 1.0,
             'source_type': 'custom',
@@ -35,29 +35,29 @@ class TrendStateStrategy:
             'use_trend_filter': True,
             'trend_ma_len': 200,
             
-            # فیلتر ADX (سختگیرانه‌تر)
+            # فیلتر ADX
             'use_adx_filter': True,
             'adx_len': 14,
-            'adx_threshold': 25,    # از 20 به 25 - فقط روندهای قوی
+            'adx_threshold': 20,
             
-            # فیلتر نوسان (محدودتر)
+            # فیلتر نوسان
             'use_vol_filter': True,
             'vol_len': 50,
-            'vol_ratio_min': 0.9,   # از 0.8 به 0.9
-            'vol_ratio_max': 1.3,   # از 1.5 به 1.3
+            'vol_ratio_min': 0.8,
+            'vol_ratio_max': 1.5,
             
             # فیلتر Bollinger Squeeze
             'use_bb_filter': True,
             'bb_len': 20,
             'bb_mult': 2.0,
-            'bb_squeeze_threshold': 0.7,  # از 0.8 به 0.7
+            'bb_squeeze_threshold': 0.8,
             
-            # مدیریت ریسک (بهبود نسبت R/R)
+            # مدیریت ریسک
             'use_atr_stop': True,
             'atr_len': 14,
-            'atr_mult_sl': 2.0,     # از 2.5 به 2.0 - حد ضرر نزدیک‌تر
+            'atr_mult_sl': 2.5,
             'use_atr_tp': True,
-            'atr_mult_tp': 6.0,     # از 4.0 به 6.0 - حد سود دورتر
+            'atr_mult_tp': 4.0,
             'allow_short': True,
         }
         
