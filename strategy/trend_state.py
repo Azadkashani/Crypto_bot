@@ -20,7 +20,7 @@ class TrendStateStrategy:
         Parameters:
         -----------
         config : Dict
-            تنظیمات استراتژی (همان STRATEGY_CONFIG از settings.py)
+            تنظیمات استراتژی
         """
         # تنظیمات پیش‌فرض
         self.config = {
@@ -35,10 +35,10 @@ class TrendStateStrategy:
             'use_trend_filter': True,
             'trend_ma_len': 200,
             
-            # فیلتر ADX
+            # فیلتر ADX (سختگیرانه‌تر)
             'use_adx_filter': True,
             'adx_len': 14,
-            'adx_threshold': 20,
+            'adx_threshold': 30,    # از 20 به 30
             
             # فیلتر نوسان
             'use_vol_filter': True,
@@ -52,10 +52,10 @@ class TrendStateStrategy:
             'bb_mult': 2.0,
             'bb_squeeze_threshold': 0.8,
             
-            # مدیریت ریسک
+            # مدیریت ریسک (حد ضرر دورتر)
             'use_atr_stop': True,
             'atr_len': 14,
-            'atr_mult_sl': 2.5,
+            'atr_mult_sl': 3.5,     # از 2.5 به 3.5
             'use_atr_tp': True,
             'atr_mult_tp': 4.0,
             'allow_short': True,
@@ -72,9 +72,6 @@ class TrendStateStrategy:
     def calculate_source(self, df: pd.DataFrame) -> pd.Series:
         """
         محاسبه منبع قیمت بر اساس نوع انتخاب شده
-        
-        مشابه Pine Script:
-        src_type = input.string("Custom", ...)
         """
         source_type = self.config['source_type']
         
@@ -96,22 +93,16 @@ class TrendStateStrategy:
     def alma(self, series: pd.Series, length: int, offset: float, sigma: float) -> pd.Series:
         """
         محاسبه ALMA (Arnaud Legoux Moving Average)
-        
-        مشابه Pine Script:
-        ta.alma(movement, length, offset, sigma)
         """
         m = offset * (length - 1)
         s = length / sigma
         
-        # محاسبه وزن‌ها
         weights = np.zeros(length)
         for i in range(length):
             weights[i] = np.exp(-0.5 * ((i - m) / s) ** 2)
         
-        # نرمال‌سازی وزن‌ها
         weights = weights / weights.sum()
         
-        # اعمال میانگین وزنی
         alma_values = series.rolling(window=length).apply(
             lambda x: np.sum(x * weights), raw=True
         )
@@ -121,24 +112,11 @@ class TrendStateStrategy:
     def calculate_trend_state(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         محاسبه هسته فیلتر Trend State
-        
-        این تابع دقیقاً منطق Pine Script را پیاده‌سازی می‌کند:
-        
-        movement = math.abs(ta.change(src))
-        smoothMove = ta.alma(movement, length, offset, sigma)
-        adaptiveRange = smoothMove * multiplier
-        
-        filter := (src > upper ? src - adaptiveRange : 
-                  src < lower ? src + adaptiveRange : 
-                  prevFilter)
         """
-        # محاسبه منبع قیمت
         src = self.calculate_source(df)
         
-        # محاسبه movement (تغییرات قیمت)
         movement = src.diff().abs()
         
-        # محاسبه smoothMove با ALMA
         smooth_move = self.alma(
             movement, 
             self.config['length'], 
@@ -146,16 +124,12 @@ class TrendStateStrategy:
             self.config['sigma']
         )
         
-        # محاسبه adaptiveRange
         adaptive_range = smooth_move * self.config['multiplier']
         
-        # محاسبه خط فیلتر (همان منطق Pine Script)
         filter_line = pd.Series(index=df.index, dtype=float)
         
-        # اولین مقدار
         filter_line.iloc[0] = src.iloc[0] if not pd.isna(src.iloc[0]) else 0
         
-        # حلقه محاسبه فیلتر
         for i in range(1, len(df)):
             prev_filter = filter_line.iloc[i-1]
             
@@ -173,7 +147,6 @@ class TrendStateStrategy:
             else:
                 filter_line.iloc[i] = prev_filter
         
-        # محاسبه روند
         trend = pd.Series(index=df.index, dtype=int)
         trend.iloc[0] = 0
         
@@ -185,7 +158,6 @@ class TrendStateStrategy:
             else:
                 trend.iloc[i] = trend.iloc[i-1] if not pd.isna(trend.iloc[i-1]) else 0
         
-        # ذخیره نتایج
         df['filter_line'] = filter_line
         df['trend'] = trend
         df['adaptive_range'] = adaptive_range
@@ -196,12 +168,6 @@ class TrendStateStrategy:
     def calculate_filters(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         محاسبه تمام فیلترهای کیفیت سیگنال
-        
-        فیلترها:
-        1. EMA 200 برای روند بلندمدت
-        2. ADX + DI برای قدرت و جهت روند
-        3. Volatility Filter با محدوده بالا و پایین
-        4. Bollinger Squeeze برای تشخیص بازار رنج
         """
         # 1. EMA 200
         if self.config['use_trend_filter']:
@@ -287,14 +253,6 @@ class TrendStateStrategy:
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         تولید سیگنال‌های معاملاتی با تمام فیلترها
-        
-        این تابع دقیقاً منطق Pine Script را پیاده‌سازی می‌کند:
-        
-        trendChange = ta.change(trend)
-        rawBull = trendChange > 0 and trend == 1
-        rawBear = trendChange < 0 and trend == -1
-        
-        bullSignal = rawBull and trendOk_long and adxTrendOk_long and volOk and bbOk and cooldownOk
         """
         # محاسبه هسته فیلتر
         df = self.calculate_trend_state(df)
@@ -302,7 +260,7 @@ class TrendStateStrategy:
         # محاسبه فیلترها
         df = self.calculate_filters(df)
         
-        # تشخیص تغییر روند (بدون تأخیر)
+        # تشخیص تغییر روند
         df['trend_change'] = df['trend'].diff()
         
         # سیگنال‌های خام
@@ -360,7 +318,6 @@ class TrendStateStrategy:
             'bear_signal': row['bear_signal'],
         }
         
-        # اضافه کردن اطلاعات فیلترها
         if 'trend_ma' in df.columns:
             signal_info['trend_ma'] = row['trend_ma']
         if 'adx' in df.columns:
@@ -373,7 +330,6 @@ class TrendStateStrategy:
             signal_info['bb_width'] = row['bb_width']
             signal_info['bb_squeeze'] = row['bb_squeeze']
         
-        # حد ضرر و سود
         if 'long_stop' in df.columns:
             signal_info['long_stop'] = row['long_stop']
             signal_info['long_tp'] = row['long_tp']
