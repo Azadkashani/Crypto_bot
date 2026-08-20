@@ -63,3 +63,11 @@ build/
 
 # Git
 .gitignore.swp
+
+# Legacy research files (do not commit)
+backtest/
+backtest_results.csv
+backtest_results_1h.csv
+forensic_analysis.csv
+losing_trades_analysis.csv
+test_results_strategy.csv
