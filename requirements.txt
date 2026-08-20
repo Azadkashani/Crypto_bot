@@ -3,7 +3,7 @@ python-dotenv>=1.0.0
 pandas>=2.1.0
 numpy>=1.26.0
 # Exchange API
-gate-api==6.78.0
+gate-api==7.2.129
 # Technical Analysis
 pandas-ta==0.3.14b0
 # Data & Backtesting
@@ -28,5 +28,3 @@ websockets>=12.0
 sqlalchemy>=2.0.0
 pydantic>=2.7.0
 pydantic-settings>=2.2.0
-# Testing
-pytest>=8.0.0
