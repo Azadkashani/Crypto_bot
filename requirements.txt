@@ -2,28 +2,31 @@
 python-dotenv>=1.0.0
 pandas>=2.1.0
 numpy>=1.26.0
-
 # Exchange API
 gate-api==6.78.0
-
 # Technical Analysis
 pandas-ta==0.3.14b0
-
 # Data & Backtesting
 backtesting==0.3.3
-
 # News & Sentiment
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 feedparser>=6.0.10
-
 # Logging & Monitoring
 loguru>=0.7.0
 python-telegram-bot>=20.0
-
 # Scheduling
 apscheduler>=3.10.0
-
 # Utils
 colorama>=0.4.6
 tabulate>=0.9.0
+# Blockchain & Async
+web3>=6.18.0
+httpx>=0.27.0
+websockets>=12.0
+# Database & Validation
+sqlalchemy>=2.0.0
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+# Testing
+pytest>=8.0.0

@@ -1,0 +1,94 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
+from enum import Enum
+
+class Mode(str, Enum):
+    research = "research"
+    paper = "paper"
+    live = "live"
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    # Project
+    mode: Mode = Mode.research
+    live_trading_enabled: bool = False
+
+    # Database
+    database_url: str = "sqlite:///data/whale.db"
+
+    # Chain flags
+    eth_enabled: bool = True
+    bsc_enabled: bool = False
+    solana_enabled: bool = False
+
+    # Ethereum
+    eth_primary_provider: str = "alchemy"
+    eth_backup_provider: str = "etherscan"
+    eth_rpc_url: Optional[str] = None
+    eth_ws_url: Optional[str] = None
+    eth_etherscan_api_key: Optional[str] = None
+    eth_chain_id: int = 1
+
+    # BSC
+    bsc_primary_provider: str = "quicknode"
+    bsc_backup_provider: str = "bscscan"
+    bsc_rpc_url: Optional[str] = None
+    bsc_ws_url: Optional[str] = None
+    bscscan_api_key: Optional[str] = None
+    bsc_chain_id: int = 56
+
+    # Solana
+    solana_primary_provider: str = "helius"
+    solana_backup_provider: str = "solscan"
+    solana_rpc_url: Optional[str] = None
+    solana_ws_url: Optional[str] = None
+    solana_api_key: Optional[str] = None
+
+    # Whale Detection
+    min_portfolio_value_usd: float = 1_000_000
+    min_trade_usd: float = 100_000
+    min_buy_usd: float = 50_000
+    min_transaction_count: int = 10
+    whale_score_threshold: float = 70
+    smart_money_score_threshold: float = 70
+    predictive_wallet_threshold: float = 75
+
+    # Scoring Weights
+    weight_capital: float = 0.15
+    weight_volume: float = 0.15
+    weight_tx_size: float = 0.15
+    weight_consistency: float = 0.10
+    weight_roi: float = 0.15
+    weight_win_rate: float = 0.15
+    weight_entry_timing: float = 0.15
+
+    # Token Universe Filters
+    min_liquidity_usd: float = 1_000_000
+    min_24h_volume_usd: float = 500_000
+    min_market_cap_usd: float = 5_000_000
+    min_token_age_days: int = 7
+    max_token_age_days: int = 3650
+    min_whale_activity_count: int = 3
+
+    # Consensus
+    consensus_window_minutes: int = 60
+    min_independent_whales: int = 3
+    min_net_flow_usd: float = 500_000
+
+    # Signal
+    signal_min_score: float = 85
+    signal_min_confidence: float = 80
+
+    # Finality
+    required_confirmations: int = 6
+
+    # Rate Limit & Cost Tracking
+    rate_limit_enabled: bool = True
+    cost_tracking_enabled: bool = True
+
+    # Gate.io
+    gate_api_key: Optional[str] = None
+    gate_api_secret: Optional[str] = None
+
+settings = Settings()
