@@ -1,3 +1,17 @@
+#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).parent
+
+def write(rel, content):
+    path = ROOT / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content.strip() + "\n", encoding="utf-8")
+    print(f"written: {rel}")
+
+full_repositories = """
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from src.storage.models import (
@@ -91,3 +105,18 @@ class SwapRepository(BaseRepository):
 
     def get_all_valid_swaps(self, chain: str) -> List[Swap]:
         return self.session.query(Swap).filter(Swap.chain == chain, Swap.side.in_(['BUY', 'SELL'])).all()
+"""
+
+write("src/storage/repositories.py", full_repositories)
+
+print("running tests...")
+res = subprocess.run([sys.executable, "-m", "pytest", "-q", "--disable-warnings"], cwd=ROOT)
+if res.returncode != 0:
+    print("tests failed")
+    sys.exit(1)
+print("tests passed")
+
+subprocess.run(["git", "add", "-A"], cwd=ROOT, check=True)
+subprocess.run(["git", "commit", "-m", "fix: restore full repositories.py"], cwd=ROOT, check=True)
+subprocess.run(["git", "push", "origin", "main"], cwd=ROOT, check=True)
+print("Fixed and committed.")

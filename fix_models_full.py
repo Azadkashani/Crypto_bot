@@ -1,3 +1,18 @@
+#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).parent
+
+def write(rel, content):
+    path = ROOT / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content.strip() + "\n", encoding="utf-8")
+    print(f"written: {rel}")
+
+# محتوای کامل models.py شامل تمام مدل‌ها
+full_models = """
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, JSON, Index, UniqueConstraint, ForeignKey
 from sqlalchemy.orm import declarative_base
 from datetime import datetime, UTC
@@ -307,3 +322,18 @@ class Swap(Base):
         Index('ix_swaps_chain_dex_timestamp', 'chain', 'dex', 'timestamp'),
         Index('ix_swaps_side_timestamp', 'side', 'timestamp'),
     )
+"""
+
+write("src/storage/models.py", full_models)
+
+print("running tests...")
+res = subprocess.run([sys.executable, "-m", "pytest", "-q", "--disable-warnings"], cwd=ROOT)
+if res.returncode != 0:
+    print("tests failed")
+    sys.exit(1)
+print("tests passed")
+
+subprocess.run(["git", "add", "-A"], cwd=ROOT, check=True)
+subprocess.run(["git", "commit", "-m", "fix: restore full models.py with all tables"], cwd=ROOT, check=True)
+subprocess.run(["git", "push", "origin", "main"], cwd=ROOT, check=True)
+print("Fixed and committed.")

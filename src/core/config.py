@@ -9,20 +9,12 @@ class Mode(str, Enum):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
-
-    # Project
     mode: Mode = Mode.research
     live_trading_enabled: bool = False
-
-    # Database
     database_url: str = "sqlite:///data/whale.db"
-
-    # Chain flags
     eth_enabled: bool = True
     bsc_enabled: bool = False
     solana_enabled: bool = False
-
-    # Ethereum
     eth_primary_provider: str = "alchemy"
     eth_backup_provider: str = "etherscan"
     eth_rpc_url: Optional[str] = None
@@ -37,32 +29,31 @@ class Settings(BaseSettings):
     eth_rate_limit: int = 5
     eth_backfill_batch_size: int = 100
     eth_backfill_resume_file: str = "data/backfill_resume.json"
-
-    # BSC
     bsc_primary_provider: str = "quicknode"
     bsc_backup_provider: str = "bscscan"
     bsc_rpc_url: Optional[str] = None
     bsc_ws_url: Optional[str] = None
     bscscan_api_key: Optional[str] = None
     bsc_chain_id: int = 56
-
-    # Solana
     solana_primary_provider: str = "helius"
     solana_backup_provider: str = "solscan"
     solana_rpc_url: Optional[str] = None
     solana_ws_url: Optional[str] = None
     solana_api_key: Optional[str] = None
-
-    # Whale Detection (not used yet)
-    min_portfolio_value_usd: float = 1_000_000
-    min_trade_usd: float = 100_000
-    min_buy_usd: float = 50_000
-    min_transaction_count: int = 10
-    whale_score_threshold: float = 70
-    smart_money_score_threshold: float = 70
-    predictive_wallet_threshold: float = 75
-
-    # Scoring Weights (not used yet)
+    whale_min_total_volume_usd: float = 1_000_000
+    whale_min_avg_trade_usd: float = 50_000
+    whale_min_largest_trade_usd: float = 100_000
+    whale_min_buy_volume_usd: float = 500_000
+    whale_min_swap_count: int = 10
+    whale_lookback_days: int = 30
+    whale_score_threshold_candidate: float = 60
+    whale_score_threshold_whale: float = 80
+    whale_volume_weight: float = 0.25
+    whale_avg_trade_weight: float = 0.20
+    whale_largest_trade_weight: float = 0.20
+    whale_activity_weight: float = 0.15
+    whale_dex_activity_weight: float = 0.10
+    whale_capital_weight: float = 0.10
     weight_capital: float = 0.15
     weight_volume: float = 0.15
     weight_tx_size: float = 0.15
@@ -70,36 +61,22 @@ class Settings(BaseSettings):
     weight_roi: float = 0.15
     weight_win_rate: float = 0.15
     weight_entry_timing: float = 0.15
-
-    # Token Universe Filters (not used yet)
     min_liquidity_usd: float = 1_000_000
     min_24h_volume_usd: float = 500_000
     min_market_cap_usd: float = 5_000_000
     min_token_age_days: int = 7
     max_token_age_days: int = 3650
     min_whale_activity_count: int = 3
-
-    # Consensus (not used yet)
     consensus_window_minutes: int = 60
     min_independent_whales: int = 3
     min_net_flow_usd: float = 500_000
-
-    # Signal (not used yet)
     signal_min_score: float = 85
     signal_min_confidence: float = 80
-
-    # Finality
     required_confirmations: int = 6
-
-    # Rate Limit & Cost Tracking
     rate_limit_enabled: bool = True
     cost_tracking_enabled: bool = True
-
-    # Gate.io (not used yet)
     gate_api_key: Optional[str] = None
     gate_api_secret: Optional[str] = None
-
-    # DEX / Swap Classification (Phase 5)
     buy_confidence_threshold: float = 80
     sell_confidence_threshold: float = 80
     native_asset_symbol: str = "ETH"
