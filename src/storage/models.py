@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, JSON, Index
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, JSON, Index, UniqueConstraint
 from sqlalchemy.orm import declarative_base
 from datetime import datetime, UTC
 
@@ -163,8 +163,6 @@ class WhaleConsensus(Base):
         Index('ix_consensus_chain_token_window', 'chain', 'token', 'window_start'),
     )
 
-# ------------------- New normalized tables for Phase 4 -------------------
-
 class Block(Base):
     __tablename__ = "blocks"
 
@@ -176,7 +174,7 @@ class Block(Base):
     parent_hash = Column(String)
     timestamp = Column(DateTime, nullable=False)
     transaction_count = Column(Integer, default=0)
-    status = Column(String, default="pending")  # pending/confirmed/finalized/reorged
+    status = Column(String, default="pending")
     extra_data = Column(JSON, nullable=True)
 
     __table_args__ = (
@@ -197,7 +195,7 @@ class TokenTransfer(Base):
     token_address = Column(String, nullable=False)
     from_address = Column(String, nullable=False)
     to_address = Column(String, nullable=False)
-    amount_raw = Column(String, nullable=False)  # raw amount as string to avoid overflow
+    amount_raw = Column(String, nullable=False)
     amount_normalized = Column(Float, nullable=True)
     decimals = Column(Integer, nullable=True)
     token_symbol = Column(String, nullable=True)
@@ -225,8 +223,8 @@ class EventLog(Base):
     log_index = Column(Integer, nullable=False)
     contract_address = Column(String, nullable=False)
     topic0 = Column(String, nullable=False)
-    topics = Column(JSON, nullable=True)  # list of topics
-    data = Column(JSON, nullable=True)    # decoded data
+    topics = Column(JSON, nullable=True)
+    data = Column(JSON, nullable=True)
     timestamp = Column(DateTime, nullable=False)
     status = Column(String, default="pending")
     extra_data = Column(JSON, nullable=True)
@@ -235,4 +233,46 @@ class EventLog(Base):
         Index('ix_event_logs_chain_contract', 'chain', 'contract_address', 'timestamp'),
         Index('ix_event_logs_chain_tx', 'chain', 'transaction_hash'),
         Index('ix_event_logs_chain_timestamp', 'chain', 'timestamp'),
+    )
+
+class Swap(Base):
+    __tablename__ = "swaps"
+
+    id = Column(Integer, primary_key=True)
+    chain = Column(String, nullable=False)
+    dex = Column(String, nullable=False)
+    protocol_version = Column(String, nullable=True)
+    tx_hash = Column(String, nullable=False)
+    block_number = Column(Integer, nullable=False)
+    timestamp = Column(DateTime, nullable=False)
+    log_index = Column(Integer, nullable=False)
+    wallet_address = Column(String, nullable=False)
+    token_in = Column(String, nullable=False)
+    token_out = Column(String, nullable=False)
+    amount_in_raw = Column(String, nullable=True)
+    amount_out_raw = Column(String, nullable=True)
+    amount_in = Column(Float, nullable=True)
+    amount_out = Column(Float, nullable=True)
+    token_in_decimals = Column(Integer, nullable=True)
+    token_out_decimals = Column(Integer, nullable=True)
+    token_in_symbol = Column(String, nullable=True)
+    token_out_symbol = Column(String, nullable=True)
+    side = Column(String, nullable=False)  # BUY/SELL/UNKNOWN
+    native_value = Column(Float, nullable=True)
+    usd_value = Column(Float, nullable=True)
+    pool_address = Column(String, nullable=True)
+    router_address = Column(String, nullable=True)
+    confidence = Column(Float, nullable=True)
+    classification_reason = Column(String, nullable=True)
+    swap_group_id = Column(String, nullable=True)
+    extra_data = Column(JSON, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint('chain', 'tx_hash', 'log_index', name='uq_swap_chain_tx_log'),
+        Index('ix_swaps_chain_tx', 'chain', 'tx_hash'),
+        Index('ix_swaps_chain_wallet_timestamp', 'chain', 'wallet_address', 'timestamp'),
+        Index('ix_swaps_chain_token_in_timestamp', 'chain', 'token_in', 'timestamp'),
+        Index('ix_swaps_chain_token_out_timestamp', 'chain', 'token_out', 'timestamp'),
+        Index('ix_swaps_chain_dex_timestamp', 'chain', 'dex', 'timestamp'),
+        Index('ix_swaps_side_timestamp', 'side', 'timestamp'),
     )

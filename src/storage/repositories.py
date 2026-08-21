@@ -1,6 +1,6 @@
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from src.storage.models import Wallet, Transaction, WhaleEvent, Signal, ExcludedAddress, TokenStats, WhaleConsensus, Block, TokenTransfer, EventLog
+from src.storage.models import Wallet, Transaction, WhaleEvent, Signal, ExcludedAddress, TokenStats, WhaleConsensus, Block, TokenTransfer, EventLog, Swap
 
 class BaseRepository:
     def __init__(self, session: Session):
@@ -69,3 +69,10 @@ class EventLogRepository(BaseRepository):
 
     def add(self, log: EventLog):
         self.session.add(log)
+
+class SwapRepository(BaseRepository):
+    def get_by_tx_log(self, chain: str, tx_hash: str, log_index: int) -> Optional[Swap]:
+        return self.session.query(Swap).filter_by(chain=chain, tx_hash=tx_hash, log_index=log_index).first()
+
+    def add(self, swap: Swap):
+        self.session.add(swap)

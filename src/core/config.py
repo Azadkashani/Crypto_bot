@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     solana_ws_url: Optional[str] = None
     solana_api_key: Optional[str] = None
 
-    # Whale Detection
+    # Whale Detection (not used yet)
     min_portfolio_value_usd: float = 1_000_000
     min_trade_usd: float = 100_000
     min_buy_usd: float = 50_000
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     smart_money_score_threshold: float = 70
     predictive_wallet_threshold: float = 75
 
-    # Scoring Weights
+    # Scoring Weights (not used yet)
     weight_capital: float = 0.15
     weight_volume: float = 0.15
     weight_tx_size: float = 0.15
@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     weight_win_rate: float = 0.15
     weight_entry_timing: float = 0.15
 
-    # Token Universe Filters
+    # Token Universe Filters (not used yet)
     min_liquidity_usd: float = 1_000_000
     min_24h_volume_usd: float = 500_000
     min_market_cap_usd: float = 5_000_000
@@ -79,12 +79,12 @@ class Settings(BaseSettings):
     max_token_age_days: int = 3650
     min_whale_activity_count: int = 3
 
-    # Consensus
+    # Consensus (not used yet)
     consensus_window_minutes: int = 60
     min_independent_whales: int = 3
     min_net_flow_usd: float = 500_000
 
-    # Signal
+    # Signal (not used yet)
     signal_min_score: float = 85
     signal_min_confidence: float = 80
 
@@ -95,8 +95,17 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     cost_tracking_enabled: bool = True
 
-    # Gate.io
+    # Gate.io (not used yet)
     gate_api_key: Optional[str] = None
     gate_api_secret: Optional[str] = None
+
+    # DEX / Swap Classification (Phase 5)
+    buy_confidence_threshold: float = 80
+    sell_confidence_threshold: float = 80
+    native_asset_symbol: str = "ETH"
+    wrapped_native_symbol: str = "WETH"
+    wrapped_native_address: str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+    stablecoin_addresses_ethereum: str = "0xdAC17F958D2ee523a2206206994597C13D831ec7,0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48,0x6B175474E89094C44Da98b954EedeAC495271d0F"
+    dex_swap_topic_uniswap_v2: str = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822"
 
 settings = Settings()
