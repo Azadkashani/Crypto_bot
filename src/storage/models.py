@@ -19,7 +19,7 @@ class Wallet(Base):
     smart_money_score = Column(Float, nullable=True)
     predictive_wallet_score = Column(Float, nullable=True)
     status = Column(String, default="active")
-    metadata = Column(JSON, nullable=True)
+    extra_data = Column(JSON, nullable=True)  # Renamed from metadata
 
     __table_args__ = (
         Index('ix_wallets_chain_address', 'chain', 'address'),
