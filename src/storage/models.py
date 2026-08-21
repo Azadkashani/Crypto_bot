@@ -20,7 +20,6 @@ class Wallet(Base):
     status = Column(String, default="active")
     extra_data = Column(JSON, nullable=True)
 
-    # Whale Detection fields (Phase 6)
     total_volume_usd = Column(Float, default=0.0)
     buy_volume_usd = Column(Float, default=0.0)
     sell_volume_usd = Column(Float, default=0.0)
@@ -36,7 +35,6 @@ class Wallet(Base):
     address_type = Column(String, default="unknown")
     exclusion_reason = Column(String, nullable=True)
 
-    # Smart Money summary fields (Phase 7)
     smart_money_status = Column(String, default="INSUFFICIENT_DATA")
     win_rate = Column(Float, nullable=True)
     average_return = Column(Float, nullable=True)
@@ -163,7 +161,6 @@ class Signal(Base):
     )
 
 class WalletPerformance(Base):
-    """Store per-trade performance evaluation results."""
     __tablename__ = "wallet_performance"
     id = Column(Integer, primary_key=True)
     wallet = Column(String, nullable=False)
@@ -179,7 +176,6 @@ class WalletPerformance(Base):
     dex = Column(String, nullable=True)
     regime = Column(String, nullable=True)
 
-    # Returns (percentage) for horizons
     return_1m = Column(Float, nullable=True)
     return_5m = Column(Float, nullable=True)
     return_15m = Column(Float, nullable=True)
@@ -189,7 +185,6 @@ class WalletPerformance(Base):
     return_12h = Column(Float, nullable=True)
     return_24h = Column(Float, nullable=True)
 
-    # MFE / MAE (percentage) for some horizons
     mfe_5m = Column(Float, nullable=True)
     mfe_15m = Column(Float, nullable=True)
     mfe_30m = Column(Float, nullable=True)
@@ -204,12 +199,11 @@ class WalletPerformance(Base):
     mae_4h = Column(Float, nullable=True)
     mae_24h = Column(Float, nullable=True)
 
-    # Win flags (using min_win_return_pct threshold)
     win_1h = Column(Boolean, nullable=True)
     win_4h = Column(Boolean, nullable=True)
     win_24h = Column(Boolean, nullable=True)
 
-    evaluation_status = Column(String, default="PENDING")  # COMPLETED, PARTIAL, UNAVAILABLE, INSUFFICIENT
+    evaluation_status = Column(String, default="PENDING")
 
     __table_args__ = (
         UniqueConstraint('chain', 'tx_hash', name='uq_wallet_perf_chain_tx'),
@@ -248,13 +242,42 @@ class WhaleConsensus(Base):
     token = Column(String, nullable=False)
     chain = Column(String, nullable=False)
     window_start = Column(DateTime, nullable=False)
+    window_end = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
     total_buy_volume = Column(Float, default=0.0)
     total_sell_volume = Column(Float, default=0.0)
-    net_flow = Column(Float, default=0.0)
-    independent_whales = Column(Integer, default=0)
+    net_whale_flow = Column(Float, default=0.0)
+
+    unique_buying_wallets = Column(Integer, default=0)
+    unique_selling_wallets = Column(Integer, default=0)
+    independent_buying_whales = Column(Integer, default=0)
+    independent_selling_whales = Column(Integer, default=0)
+
+    buy_event_count = Column(Integer, default=0)
+    sell_event_count = Column(Integer, default=0)
+
+    average_whale_score = Column(Float, nullable=True)
+    weighted_whale_score = Column(Float, nullable=True)
+    average_smart_money_score = Column(Float, nullable=True)
+    weighted_smart_money_score = Column(Float, nullable=True)
+
+    temporal_convergence_score = Column(Float, default=0.0)
+    whale_agreement_score = Column(Float, default=0.0)
+    wallet_breadth_score = Column(Float, default=0.0)
+    volume_strength_score = Column(Float, default=0.0)
+
     consensus_score = Column(Float, default=0.0)
+    confidence = Column(Float, default=0.0)
+
+    direction = Column(String, default="NEUTRAL")
+    status = Column(String, default="INSUFFICIENT_SAMPLE")
+
+    data_quality_score = Column(Float, default=0.0)
+    components = Column(JSON, nullable=True)
 
     __table_args__ = (
+        UniqueConstraint('chain', 'token', 'window_start', name='uq_consensus_chain_token_window'),
         Index('ix_consensus_chain_token_window', 'chain', 'token', 'window_start'),
     )
 

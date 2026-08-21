@@ -86,10 +86,20 @@ class Settings(BaseSettings):
     max_token_age_days: int = 3650
     min_whale_activity_count: int = 3
 
-    # Consensus (not used yet)
+    # Consensus (Phase 8)
     consensus_window_minutes: int = 60
     min_independent_whales: int = 3
     min_net_flow_usd: float = 500_000
+    min_consensus_score: float = 70
+    min_consensus_confidence: float = 70
+
+    consensus_weight_independent_count: float = 0.25
+    consensus_weight_net_flow: float = 0.20
+    consensus_weight_buy_sell_ratio: float = 0.15
+    consensus_weight_avg_whale_score: float = 0.10
+    consensus_weight_avg_smart_money_score: float = 0.15
+    consensus_weight_temporal_convergence: float = 0.10
+    consensus_weight_whale_agreement: float = 0.05
 
     # Signal (not used yet)
     signal_min_score: float = 85

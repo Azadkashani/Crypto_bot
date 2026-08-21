@@ -58,6 +58,27 @@ class WhaleConsensusRepository(BaseRepository):
     def add(self, consensus: WhaleConsensus):
         self.session.add(consensus)
 
+    def get_by_window(self, chain: str, token: str, window_start) -> Optional[WhaleConsensus]:
+        return self.session.query(WhaleConsensus).filter_by(
+            chain=chain, token=token, window_start=window_start
+        ).first()
+
+    def get_recent(self, chain: str, limit: int = 10) -> List[WhaleConsensus]:
+        return self.session.query(WhaleConsensus).filter_by(chain=chain).order_by(
+            WhaleConsensus.window_start.desc()
+        ).limit(limit).all()
+
+    def get_token_consensus(self, chain: str, token: str) -> List[WhaleConsensus]:
+        return self.session.query(WhaleConsensus).filter_by(chain=chain, token=token).order_by(
+            WhaleConsensus.window_start.desc()
+        ).all()
+
+    def get_bullish(self, chain: str) -> List[WhaleConsensus]:
+        return self.session.query(WhaleConsensus).filter_by(chain=chain, direction="BULLISH").all()
+
+    def get_bearish(self, chain: str) -> List[WhaleConsensus]:
+        return self.session.query(WhaleConsensus).filter_by(chain=chain, direction="BEARISH").all()
+
 class BlockRepository(BaseRepository):
     def get_by_hash(self, block_hash: str) -> Optional[Block]:
         return self.session.query(Block).filter_by(block_hash=block_hash).first()
