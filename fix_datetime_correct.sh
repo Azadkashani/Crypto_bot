@@ -1,3 +1,14 @@
+#!/bin/bash
+set -e
+
+echo "🔧 اصلاح قطعی datetime در مدل‌ها..."
+
+cd ~/Crypto_bot
+
+# --------------------------------------------------------------------
+# بازنویسی کامل models.py با import صحیح و استفاده از datetime.now(UTC)
+# --------------------------------------------------------------------
+cat > src/storage/models.py <<'EOF'
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, JSON, Index
 from sqlalchemy.orm import declarative_base
 from datetime import datetime, UTC
@@ -184,3 +195,25 @@ class BlockchainEvent(Base):
         Index('ix_blockchain_events_tx', 'chain', 'transaction_hash'),
         Index('ix_blockchain_events_type', 'event_type'),
     )
+EOF
+
+# --------------------------------------------------------------------
+# اجرای تست‌ها
+# --------------------------------------------------------------------
+echo "🧪 اجرای تست‌ها..."
+if ! pytest -q --disable-warnings; then
+    echo "❌ تست‌ها شکست خوردند. فایل را بررسی کنید."
+    exit 1
+fi
+
+echo "✅ تست‌ها موفق بودند."
+
+# --------------------------------------------------------------------
+# Commit و Push
+# --------------------------------------------------------------------
+echo "📦 Commit و Push اصلاح datetime..."
+git add -A
+git commit -m "fix: correct timezone-aware datetime import and defaults" || echo "No changes to commit"
+git push origin main
+
+echo "🎉 اصلاح datetime انجام شد و به گیت‌هاب Push شد."

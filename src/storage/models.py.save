@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, JSON, Index
 from sqlalchemy.orm import declarative_base
-from datetime import datetime, UTC
+from datetime import datetime
 
 Base = declarative_base()
 
@@ -10,8 +10,8 @@ class Wallet(Base):
     id = Column(Integer, primary_key=True)
     address = Column(String, nullable=False, unique=True)
     chain = Column(String, nullable=False)
-    first_seen = Column(DateTime, default=lambda: datetime.now(UTC))
-    last_seen = Column(DateTime, default=lambda: datetime.now(UTC))
+    first_seen = Column(DateTime, default=datetime.utcnow)
+    last_seen = Column(DateTime, default=datetime.utcnow)
     balance_usd = Column(Float, default=0.0)
     portfolio_value_usd = Column(Float, default=0.0)
     transaction_count = Column(Integer, default=0)
@@ -19,13 +19,10 @@ class Wallet(Base):
     smart_money_score = Column(Float, nullable=True)
     predictive_wallet_score = Column(Float, nullable=True)
     status = Column(String, default="active")
-    extra_data = Column(JSON, nullable=True)
+    extra_data = Column(JSON, nullable=True)  # Renamed from metadata
 
     __table_args__ = (
-        Index('ix_wallets_chain_address', 'chain', 'address'),
-    )
-
-class Transaction(Base):
+        Index('ix_wallets_chain_address', 'chain',class Transaction(Base):
     __tablename__ = "transactions"
 
     id = Column(Integer, primary_key=True)
@@ -144,7 +141,7 @@ class TokenStats(Base):
     liquidity = Column(Float, nullable=True)
     price = Column(Float, nullable=True)
     gate_available = Column(Boolean, default=False)
-    updated_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=datetime.utcnow)
 
 class WhaleConsensus(Base):
     __tablename__ = "whale_consensus"
@@ -161,26 +158,4 @@ class WhaleConsensus(Base):
 
     __table_args__ = (
         Index('ix_consensus_chain_token_window', 'chain', 'token', 'window_start'),
-    )
-
-class BlockchainEvent(Base):
-    """Raw/Normalized blockchain events for research/storage."""
-    __tablename__ = "blockchain_events"
-
-    id = Column(Integer, primary_key=True)
-    chain = Column(String, nullable=False)
-    network = Column(String, nullable=False)
-    event_type = Column(String, nullable=False)  # block, transaction, log, transfer, swap
-    block_number = Column(Integer, nullable=False)
-    block_hash = Column(String)
-    transaction_hash = Column(String)
-    log_index = Column(Integer, default=0)
-    data = Column(JSON, nullable=True)  # normalized data
-    status = Column(String, default="pending")  # pending/confirmed/finalized/reorged
-    timestamp = Column(DateTime, nullable=False)
-
-    __table_args__ = (
-        Index('ix_blockchain_events_chain_block', 'chain', 'block_number'),
-        Index('ix_blockchain_events_tx', 'chain', 'transaction_hash'),
-        Index('ix_blockchain_events_type', 'event_type'),
     )
