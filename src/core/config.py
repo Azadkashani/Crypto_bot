@@ -105,7 +105,6 @@ class Settings(BaseSettings):
     signal_min_score: float = 70
     signal_min_confidence: float = 70
 
-    # Signal weights (must sum to 1.0)
     signal_weight_whale_consensus: float = 0.25
     signal_weight_smart_money: float = 0.15
     signal_weight_net_whale_flow: float = 0.10
@@ -116,37 +115,29 @@ class Settings(BaseSettings):
     signal_weight_entry_timing: float = 0.05
     signal_weight_market_quality: float = 0.05
 
-    # Market confirmation thresholds
     market_confirm_bullish_threshold: float = 60
     market_confirm_bearish_threshold: float = 40
     market_confirm_neutral_min: float = 40
     market_confirm_neutral_max: float = 60
 
-    # Entry timing parameters
     entry_timing_overbought_rsi: float = 70
     entry_timing_oversold_rsi: float = 30
 
-    # Market quality thresholds
     min_liquidity_score: float = 50
     min_volume_score: float = 50
     min_volatility_score: float = 40
     max_volatility_score: float = 80
 
-    # Gate.io settings (validation only)
     gate_available_check: bool = True
 
-    # Finality
     required_confirmations: int = 6
 
-    # Rate Limit & Cost Tracking
     rate_limit_enabled: bool = True
     cost_tracking_enabled: bool = True
 
-    # Gate.io API (not used for validation in this phase, only public)
     gate_api_key: Optional[str] = None
     gate_api_secret: Optional[str] = None
 
-    # DEX / Swap Classification (Phase 5)
     buy_confidence_threshold: float = 80
     sell_confidence_threshold: float = 80
     native_asset_symbol: str = "ETH"
@@ -155,7 +146,6 @@ class Settings(BaseSettings):
     stablecoin_addresses_ethereum: str = "0xdAC17F958D2ee523a2206206994597C13D831ec7,0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48,0x6B175474E89094C44Da98b954EedeAC495271d0F"
     dex_swap_topic_uniswap_v2: str = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822"
 
-    # Smart Money Analysis (Phase 7)
     smart_money_horizons: str = "1m,5m,15m,30m,1h,4h,12h,24h"
     min_smart_money_events: int = 10
     min_win_return_pct: float = 0.5
@@ -174,6 +164,12 @@ class Settings(BaseSettings):
     score_good_threshold: float = 80
     score_strong_threshold: float = 90
 
+    # Backtest (Phase 10)
+    backtest_entry_rule: str = "NEXT_CANDLE_OPEN"  # NEXT_CANDLE_OPEN | NEXT_CANDLE_CLOSE | NEXT_AVAILABLE_PRICE
+    backtest_horizons: str = "1m,5m,15m,30m,1h,4h,12h,24h"
+    backtest_neutral_threshold_pct: float = 0.1
+    backtest_random_baseline_iterations: int = 100
+
     def validate_signal_weights(self) -> bool:
         weights = [
             self.signal_weight_whale_consensus,
@@ -186,7 +182,6 @@ class Settings(BaseSettings):
             self.signal_weight_entry_timing,
             self.signal_weight_market_quality,
         ]
-        total = sum(weights)
-        return abs(total - 1.0) < 1e-6
+        return abs(sum(weights) - 1.0) < 1e-6
 
 settings = Settings()

@@ -148,10 +148,10 @@ class Signal(Base):
     token = Column(String, nullable=False)
     chain = Column(String, nullable=False)
     timestamp = Column(DateTime, nullable=False)
-    direction = Column(String, default="NEUTRAL")  # LONG/SHORT/NEUTRAL/REJECTED
+    direction = Column(String, default="NEUTRAL")
     signal_score = Column(Float, default=0.0)
     confidence = Column(Float, default=0.0)
-    status = Column(String, default="INSUFFICIENT_DATA")  # VALID/WATCH/REJECTED/INSUFFICIENT_DATA/CONFLICTED
+    status = Column(String, default="INSUFFICIENT_DATA")
     whale_consensus_score = Column(Float, nullable=True)
     whale_consensus_confidence = Column(Float, nullable=True)
     smart_money_score = Column(Float, nullable=True)
@@ -401,4 +401,39 @@ class Swap(Base):
         Index('ix_swaps_chain_token_out_timestamp', 'chain', 'token_out', 'timestamp'),
         Index('ix_swaps_chain_dex_timestamp', 'chain', 'dex', 'timestamp'),
         Index('ix_swaps_side_timestamp', 'side', 'timestamp'),
+    )
+
+class BacktestRun(Base):
+    __tablename__ = "backtest_runs"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    config_snapshot = Column(JSON, nullable=True)
+    dataset_info = Column(String, nullable=True)
+    status = Column(String, default="RUNNING")
+
+class BacktestResult(Base):
+    __tablename__ = "backtest_results"
+    id = Column(Integer, primary_key=True)
+    run_id = Column(Integer, ForeignKey('backtest_runs.id'), nullable=False)
+    signal_id = Column(Integer, nullable=True)
+    token = Column(String, nullable=False)
+    chain = Column(String, nullable=False)
+    signal_timestamp = Column(DateTime, nullable=False)
+    direction = Column(String, nullable=False)
+    signal_score = Column(Float, nullable=True)
+    confidence = Column(Float, nullable=True)
+    entry_price = Column(Float, nullable=True)
+    horizon = Column(String, nullable=False)
+    future_price = Column(Float, nullable=True)
+    return_pct = Column(Float, nullable=True)
+    outcome = Column(String, nullable=True)  # WIN/LOSS/NEUTRAL
+    mfe = Column(Float, nullable=True)
+    mae = Column(Float, nullable=True)
+
+    __table_args__ = (
+        Index('ix_backtest_results_run', 'run_id'),
+        Index('ix_backtest_results_chain_token_time', 'chain', 'token', 'signal_timestamp'),
     )

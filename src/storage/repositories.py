@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from src.storage.models import (
     Wallet, Transaction, WhaleEvent, Signal, ExcludedAddress, TokenStats,
     WhaleConsensus, Block, TokenTransfer, EventLog, Swap,
-    WalletActivity, WalletTokenActivity
+    WalletActivity, WalletTokenActivity, BacktestRun, BacktestResult
 )
 
 class BaseRepository:
@@ -13,7 +13,6 @@ class BaseRepository:
 class WalletRepository(BaseRepository):
     def get_by_address(self, chain: str, address: str) -> Optional[Wallet]:
         return self.session.query(Wallet).filter_by(chain=chain, address=address).first()
-
     def add(self, wallet: Wallet):
         self.session.add(wallet)
 
@@ -28,7 +27,6 @@ class WalletTokenActivityRepository(BaseRepository):
 class TransactionRepository(BaseRepository):
     def get_by_hash(self, tx_hash: str) -> Optional[Transaction]:
         return self.session.query(Transaction).filter_by(transaction_hash=tx_hash).first()
-
     def add(self, tx: Transaction):
         self.session.add(tx)
 
@@ -39,82 +37,75 @@ class WhaleEventRepository(BaseRepository):
 class SignalRepository(BaseRepository):
     def add(self, signal: Signal):
         self.session.add(signal)
-
     def get_by_token_timestamp(self, chain: str, token: str, timestamp) -> Optional[Signal]:
         return self.session.query(Signal).filter_by(chain=chain, token=token, timestamp=timestamp).first()
-
     def get_recent_signals(self, chain: str, limit: int = 100) -> List[Signal]:
         return self.session.query(Signal).filter_by(chain=chain).order_by(Signal.timestamp.desc()).limit(limit).all()
 
 class ExcludedAddressRepository(BaseRepository):
     def get_by_address(self, chain: str, address: str) -> Optional[ExcludedAddress]:
         return self.session.query(ExcludedAddress).filter_by(chain=chain, address=address).first()
-
     def add(self, excluded: ExcludedAddress):
         self.session.add(excluded)
 
 class TokenStatsRepository(BaseRepository):
     def get_by_token(self, chain: str, token: str) -> Optional[TokenStats]:
         return self.session.query(TokenStats).filter_by(chain=chain, token=token).first()
-
     def add(self, stats: TokenStats):
         self.session.add(stats)
 
 class WhaleConsensusRepository(BaseRepository):
     def add(self, consensus: WhaleConsensus):
         self.session.add(consensus)
-
     def get_by_window(self, chain: str, token: str, window_start) -> Optional[WhaleConsensus]:
-        return self.session.query(WhaleConsensus).filter_by(
-            chain=chain, token=token, window_start=window_start
-        ).first()
-
+        return self.session.query(WhaleConsensus).filter_by(chain=chain, token=token, window_start=window_start).first()
     def get_recent(self, chain: str, limit: int = 10) -> List[WhaleConsensus]:
-        return self.session.query(WhaleConsensus).filter_by(chain=chain).order_by(
-            WhaleConsensus.window_start.desc()
-        ).limit(limit).all()
-
+        return self.session.query(WhaleConsensus).filter_by(chain=chain).order_by(WhaleConsensus.window_start.desc()).limit(limit).all()
     def get_token_consensus(self, chain: str, token: str) -> List[WhaleConsensus]:
-        return self.session.query(WhaleConsensus).filter_by(chain=chain, token=token).order_by(
-            WhaleConsensus.window_start.desc()
-        ).all()
-
+        return self.session.query(WhaleConsensus).filter_by(chain=chain, token=token).order_by(WhaleConsensus.window_start.desc()).all()
     def get_bullish(self, chain: str) -> List[WhaleConsensus]:
         return self.session.query(WhaleConsensus).filter_by(chain=chain, direction="BULLISH").all()
-
     def get_bearish(self, chain: str) -> List[WhaleConsensus]:
         return self.session.query(WhaleConsensus).filter_by(chain=chain, direction="BEARISH").all()
 
 class BlockRepository(BaseRepository):
     def get_by_hash(self, block_hash: str) -> Optional[Block]:
         return self.session.query(Block).filter_by(block_hash=block_hash).first()
-
     def get_by_number(self, chain: str, block_number: int) -> Optional[Block]:
         return self.session.query(Block).filter_by(chain=chain, block_number=block_number).first()
-
     def add(self, block: Block):
         self.session.add(block)
 
 class TokenTransferRepository(BaseRepository):
     def get_by_tx_log(self, tx_hash: str, log_index: int) -> Optional[TokenTransfer]:
         return self.session.query(TokenTransfer).filter_by(transaction_hash=tx_hash, log_index=log_index).first()
-
     def add(self, transfer: TokenTransfer):
         self.session.add(transfer)
 
 class EventLogRepository(BaseRepository):
     def get_by_tx_log(self, tx_hash: str, log_index: int) -> Optional[EventLog]:
         return self.session.query(EventLog).filter_by(transaction_hash=tx_hash, log_index=log_index).first()
-
     def add(self, log: EventLog):
         self.session.add(log)
 
 class SwapRepository(BaseRepository):
     def get_by_tx_log(self, chain: str, tx_hash: str, log_index: int) -> Optional[Swap]:
         return self.session.query(Swap).filter_by(chain=chain, tx_hash=tx_hash, log_index=log_index).first()
-
     def add(self, swap: Swap):
         self.session.add(swap)
-
     def get_all_valid_swaps(self, chain: str) -> List[Swap]:
         return self.session.query(Swap).filter(Swap.chain == chain, Swap.side.in_(['BUY', 'SELL'])).all()
+
+class BacktestRunRepository(BaseRepository):
+    def add(self, run: BacktestRun):
+        self.session.add(run)
+    def get(self, run_id: int) -> Optional[BacktestRun]:
+        return self.session.query(BacktestRun).filter_by(id=run_id).first()
+    def list(self) -> List[BacktestRun]:
+        return self.session.query(BacktestRun).order_by(BacktestRun.created_at.desc()).all()
+
+class BacktestResultRepository(BaseRepository):
+    def add(self, result: BacktestResult):
+        self.session.add(result)
+    def get_by_run(self, run_id: int) -> List[BacktestResult]:
+        return self.session.query(BacktestResult).filter_by(run_id=run_id).all()
