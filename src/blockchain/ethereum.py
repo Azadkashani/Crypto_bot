@@ -11,7 +11,10 @@ class EthereumAdapter(BaseBlockchainAdapter):
         self.provider = provider
 
     async def get_latest_block_number(self) -> int:
-        return await self.provider.fetch_block_number()
+        if hasattr(self.provider, "fetch_block_number"):
+            return await self.provider.fetch_block_number()
+        else:
+            raise NotImplementedError
 
     async def get_block_by_number(self, block_number: int) -> BlockData:
         raw_block = await self.provider.fetch_block_by_number(block_number)
@@ -23,7 +26,14 @@ class EthereumAdapter(BaseBlockchainAdapter):
         return normalizers.normalize_transaction(raw_tx, raw_receipt)
 
     async def get_transactions_by_address(self, address: str, start_block: int, end_block: int) -> List[TransactionData]:
-        # Not directly supported by raw RPC; will be implemented via Etherscan in future.
+        # Use Etherscan provider for historical address transactions.
+        # The provider should implement fetch_transactions_by_address.
+        tx_list = await self.provider.fetch_transactions_by_address(address, start_block, end_block)
+        transactions = []
+        for tx in tx_list:
+            # tx from Etherscan has different fields; we can convert.
+            # For simplicity, we assume it's in RPC format? We'll handle later.
+            pass
         return []
 
     async def get_token_transfers(self, address: str, token: str, start_block: int, end_block: int) -> List[TransferData]:
@@ -34,12 +44,15 @@ class EthereumAdapter(BaseBlockchainAdapter):
         return transfers
 
     async def get_dex_swap_events(self, token: str, start_block: int, end_block: int) -> List[SwapEventData]:
-        # Not yet implemented.
+        # Placeholder
         return []
 
     async def get_wallet_balance(self, address: str) -> float:
         balance_wei = await self.provider.fetch_balance(address)
-        return balance_wei / 10**18  # convert to ETH
+        return balance_wei / 10**18  # ETH
+
+    async def get_token_balance(self, token_address: str, wallet_address: str) -> int:
+        return await self.provider.fetch_token_balance(token_address, wallet_address)
 
     async def get_token_metadata(self, token_address: str) -> Dict[str, Any]:
         return await self.provider.fetch_token_metadata(token_address)

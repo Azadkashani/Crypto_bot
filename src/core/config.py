@@ -28,7 +28,15 @@ class Settings(BaseSettings):
     eth_rpc_url: Optional[str] = None
     eth_ws_url: Optional[str] = None
     eth_etherscan_api_key: Optional[str] = None
+    eth_etherscan_base_url: str = "https://api.etherscan.io/api"
     eth_chain_id: int = 1
+    eth_confirmation_blocks: int = 6
+    eth_finality_blocks: int = 20
+    eth_request_timeout: int = 30
+    eth_max_retries: int = 5
+    eth_rate_limit: int = 5
+    eth_backfill_batch_size: int = 100
+    eth_backfill_resume_file: str = "data/backfill_resume.json"
 
     # BSC
     bsc_primary_provider: str = "quicknode"

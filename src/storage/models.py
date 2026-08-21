@@ -163,24 +163,76 @@ class WhaleConsensus(Base):
         Index('ix_consensus_chain_token_window', 'chain', 'token', 'window_start'),
     )
 
-class BlockchainEvent(Base):
-    """Raw/Normalized blockchain events for research/storage."""
-    __tablename__ = "blockchain_events"
+# ------------------- New normalized tables for Phase 4 -------------------
+
+class Block(Base):
+    __tablename__ = "blocks"
 
     id = Column(Integer, primary_key=True)
     chain = Column(String, nullable=False)
     network = Column(String, nullable=False)
-    event_type = Column(String, nullable=False)  # block, transaction, log, transfer, swap
     block_number = Column(Integer, nullable=False)
-    block_hash = Column(String)
-    transaction_hash = Column(String)
-    log_index = Column(Integer, default=0)
-    data = Column(JSON, nullable=True)  # normalized data
-    status = Column(String, default="pending")  # pending/confirmed/finalized/reorged
+    block_hash = Column(String, nullable=False, unique=True)
+    parent_hash = Column(String)
     timestamp = Column(DateTime, nullable=False)
+    transaction_count = Column(Integer, default=0)
+    status = Column(String, default="pending")  # pending/confirmed/finalized/reorged
+    extra_data = Column(JSON, nullable=True)
 
     __table_args__ = (
-        Index('ix_blockchain_events_chain_block', 'chain', 'block_number'),
-        Index('ix_blockchain_events_tx', 'chain', 'transaction_hash'),
-        Index('ix_blockchain_events_type', 'event_type'),
+        Index('ix_blocks_chain_number', 'chain', 'block_number'),
+        Index('ix_blocks_chain_timestamp', 'chain', 'timestamp'),
+    )
+
+class TokenTransfer(Base):
+    __tablename__ = "token_transfers"
+
+    id = Column(Integer, primary_key=True)
+    chain = Column(String, nullable=False)
+    network = Column(String, nullable=False)
+    block_number = Column(Integer, nullable=False)
+    block_hash = Column(String)
+    transaction_hash = Column(String, nullable=False)
+    log_index = Column(Integer, nullable=False)
+    token_address = Column(String, nullable=False)
+    from_address = Column(String, nullable=False)
+    to_address = Column(String, nullable=False)
+    amount_raw = Column(String, nullable=False)  # raw amount as string to avoid overflow
+    amount_normalized = Column(Float, nullable=True)
+    decimals = Column(Integer, nullable=True)
+    token_symbol = Column(String, nullable=True)
+    timestamp = Column(DateTime, nullable=False)
+    status = Column(String, default="pending")
+    extra_data = Column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index('ix_token_transfers_chain_token', 'chain', 'token_address', 'timestamp'),
+        Index('ix_token_transfers_chain_tx', 'chain', 'transaction_hash'),
+        Index('ix_token_transfers_chain_from', 'chain', 'from_address', 'timestamp'),
+        Index('ix_token_transfers_chain_to', 'chain', 'to_address', 'timestamp'),
+    )
+
+class EventLog(Base):
+    __tablename__ = "event_logs"
+
+    id = Column(Integer, primary_key=True)
+    chain = Column(String, nullable=False)
+    network = Column(String, nullable=False)
+    block_number = Column(Integer, nullable=False)
+    block_hash = Column(String)
+    transaction_hash = Column(String, nullable=False)
+    transaction_index = Column(Integer)
+    log_index = Column(Integer, nullable=False)
+    contract_address = Column(String, nullable=False)
+    topic0 = Column(String, nullable=False)
+    topics = Column(JSON, nullable=True)  # list of topics
+    data = Column(JSON, nullable=True)    # decoded data
+    timestamp = Column(DateTime, nullable=False)
+    status = Column(String, default="pending")
+    extra_data = Column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index('ix_event_logs_chain_contract', 'chain', 'contract_address', 'timestamp'),
+        Index('ix_event_logs_chain_tx', 'chain', 'transaction_hash'),
+        Index('ix_event_logs_chain_timestamp', 'chain', 'timestamp'),
     )

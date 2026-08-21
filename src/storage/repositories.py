@@ -1,6 +1,6 @@
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from src.storage.models import Wallet, Transaction, WhaleEvent, Signal, ExcludedAddress, TokenStats, WhaleConsensus
+from src.storage.models import Wallet, Transaction, WhaleEvent, Signal, ExcludedAddress, TokenStats, WhaleConsensus, Block, TokenTransfer, EventLog
 
 class BaseRepository:
     def __init__(self, session: Session):
@@ -45,3 +45,27 @@ class TokenStatsRepository(BaseRepository):
 class WhaleConsensusRepository(BaseRepository):
     def add(self, consensus: WhaleConsensus):
         self.session.add(consensus)
+
+class BlockRepository(BaseRepository):
+    def get_by_hash(self, block_hash: str) -> Optional[Block]:
+        return self.session.query(Block).filter_by(block_hash=block_hash).first()
+
+    def get_by_number(self, chain: str, block_number: int) -> Optional[Block]:
+        return self.session.query(Block).filter_by(chain=chain, block_number=block_number).first()
+
+    def add(self, block: Block):
+        self.session.add(block)
+
+class TokenTransferRepository(BaseRepository):
+    def get_by_tx_log(self, tx_hash: str, log_index: int) -> Optional[TokenTransfer]:
+        return self.session.query(TokenTransfer).filter_by(transaction_hash=tx_hash, log_index=log_index).first()
+
+    def add(self, transfer: TokenTransfer):
+        self.session.add(transfer)
+
+class EventLogRepository(BaseRepository):
+    def get_by_tx_log(self, tx_hash: str, log_index: int) -> Optional[EventLog]:
+        return self.session.query(EventLog).filter_by(transaction_hash=tx_hash, log_index=log_index).first()
+
+    def add(self, log: EventLog):
+        self.session.add(log)

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Callable
+from typing import List, Dict, Any, Callable, Optional
 from src.core.constants import Chain
 
 class BaseDataProvider(ABC):
