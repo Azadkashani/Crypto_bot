@@ -19,6 +19,8 @@ class Wallet(Base):
     predictive_wallet_score = Column(Float, nullable=True)
     status = Column(String, default="active")
     extra_data = Column(JSON, nullable=True)
+
+    # Whale Detection fields (Phase 6)
     total_volume_usd = Column(Float, default=0.0)
     buy_volume_usd = Column(Float, default=0.0)
     sell_volume_usd = Column(Float, default=0.0)
@@ -33,6 +35,21 @@ class Wallet(Base):
     active_days = Column(Integer, default=0)
     address_type = Column(String, default="unknown")
     exclusion_reason = Column(String, nullable=True)
+
+    # Smart Money summary fields (Phase 7)
+    smart_money_status = Column(String, default="INSUFFICIENT_DATA")
+    win_rate = Column(Float, nullable=True)
+    average_return = Column(Float, nullable=True)
+    median_return = Column(Float, nullable=True)
+    profit_factor = Column(Float, nullable=True)
+    timing_accuracy = Column(Float, nullable=True)
+    entry_quality = Column(Float, nullable=True)
+    average_mfe = Column(Float, nullable=True)
+    average_mae = Column(Float, nullable=True)
+    sample_size = Column(Integer, default=0)
+    performance_confidence = Column(Float, nullable=True)
+    performance_updated_at = Column(DateTime, nullable=True)
+
     __table_args__ = (
         UniqueConstraint('chain', 'address', name='uq_wallets_chain_address'),
         Index('ix_wallets_chain_address', 'chain', 'address'),
@@ -54,6 +71,7 @@ class WalletActivity(Base):
     swap_count = Column(Integer, default=0)
     average_trade = Column(Float, default=0.0)
     largest_trade = Column(Float, default=0.0)
+
     __table_args__ = (
         Index('ix_wallet_activity_wallet_time', 'wallet_id', 'timestamp'),
         Index('ix_wallet_activity_wallet_window', 'wallet_id', 'window'),
@@ -71,6 +89,7 @@ class WalletTokenActivity(Base):
     sell_count = Column(Integer, default=0)
     first_seen = Column(DateTime, nullable=True)
     last_seen = Column(DateTime, nullable=True)
+
     __table_args__ = (
         UniqueConstraint('wallet_id', 'token_address', name='uq_wallet_token'),
         Index('ix_wallet_token_wallet', 'wallet_id'),
@@ -95,6 +114,7 @@ class Transaction(Base):
     confidence = Column(Float)
     log_index = Column(Integer, default=0)
     extra_data = Column(JSON, nullable=True)
+
     __table_args__ = (
         Index('ix_transactions_chain_timestamp', 'chain', 'timestamp'),
         Index('ix_transactions_chain_address_timestamp', 'chain', 'from_address', 'timestamp'),
@@ -118,6 +138,7 @@ class WhaleEvent(Base):
     confidence = Column(Float)
     regime = Column(String)
     extra_data = Column(JSON, nullable=True)
+
     __table_args__ = (
         Index('ix_whale_events_chain_token_timestamp', 'chain', 'token', 'timestamp'),
         Index('ix_whale_events_wallet_timestamp', 'wallet', 'timestamp'),
@@ -136,31 +157,64 @@ class Signal(Base):
     gate_available = Column(Boolean)
     regime = Column(String)
     status = Column(String)
+
     __table_args__ = (
         Index('ix_signals_chain_token_timestamp', 'chain', 'token', 'timestamp'),
     )
 
 class WalletPerformance(Base):
+    """Store per-trade performance evaluation results."""
     __tablename__ = "wallet_performance"
     id = Column(Integer, primary_key=True)
     wallet = Column(String, nullable=False)
+    chain = Column(String, nullable=False)
     token = Column(String, nullable=False)
-    timestamp = Column(DateTime, nullable=False)
-    entry_price = Column(Float)
-    entry_usd = Column(Float)
-    regime = Column(String)
+    tx_hash = Column(String, nullable=False)
+    block_number = Column(Integer, nullable=False)
+    buy_timestamp = Column(DateTime, nullable=False)
+    entry_price = Column(Float, nullable=True)
+    entry_usd_value = Column(Float, nullable=True)
+    amount = Column(Float, nullable=True)
+    confidence = Column(Float, nullable=True)
+    dex = Column(String, nullable=True)
+    regime = Column(String, nullable=True)
+
+    # Returns (percentage) for horizons
     return_1m = Column(Float, nullable=True)
     return_5m = Column(Float, nullable=True)
     return_15m = Column(Float, nullable=True)
     return_30m = Column(Float, nullable=True)
     return_1h = Column(Float, nullable=True)
     return_4h = Column(Float, nullable=True)
+    return_12h = Column(Float, nullable=True)
     return_24h = Column(Float, nullable=True)
-    mfe = Column(Float, nullable=True)
-    mae = Column(Float, nullable=True)
-    win = Column(Boolean, nullable=True)
+
+    # MFE / MAE (percentage) for some horizons
+    mfe_5m = Column(Float, nullable=True)
+    mfe_15m = Column(Float, nullable=True)
+    mfe_30m = Column(Float, nullable=True)
+    mfe_1h = Column(Float, nullable=True)
+    mfe_4h = Column(Float, nullable=True)
+    mfe_24h = Column(Float, nullable=True)
+
+    mae_5m = Column(Float, nullable=True)
+    mae_15m = Column(Float, nullable=True)
+    mae_30m = Column(Float, nullable=True)
+    mae_1h = Column(Float, nullable=True)
+    mae_4h = Column(Float, nullable=True)
+    mae_24h = Column(Float, nullable=True)
+
+    # Win flags (using min_win_return_pct threshold)
+    win_1h = Column(Boolean, nullable=True)
+    win_4h = Column(Boolean, nullable=True)
+    win_24h = Column(Boolean, nullable=True)
+
+    evaluation_status = Column(String, default="PENDING")  # COMPLETED, PARTIAL, UNAVAILABLE, INSUFFICIENT
+
     __table_args__ = (
-        Index('ix_wallet_perf_wallet_timestamp', 'wallet', 'timestamp'),
+        UniqueConstraint('chain', 'tx_hash', name='uq_wallet_perf_chain_tx'),
+        Index('ix_wallet_perf_wallet_timestamp', 'wallet', 'buy_timestamp'),
+        Index('ix_wallet_perf_chain_token_timestamp', 'chain', 'token', 'buy_timestamp'),
     )
 
 class ExcludedAddress(Base):
@@ -171,6 +225,7 @@ class ExcludedAddress(Base):
     label = Column(String)
     reason = Column(String)
     source = Column(String)
+
     __table_args__ = (
         Index('ix_excluded_addresses_chain_address', 'chain', 'address'),
     )
@@ -198,6 +253,7 @@ class WhaleConsensus(Base):
     net_flow = Column(Float, default=0.0)
     independent_whales = Column(Integer, default=0)
     consensus_score = Column(Float, default=0.0)
+
     __table_args__ = (
         Index('ix_consensus_chain_token_window', 'chain', 'token', 'window_start'),
     )
@@ -214,6 +270,7 @@ class Block(Base):
     transaction_count = Column(Integer, default=0)
     status = Column(String, default="pending")
     extra_data = Column(JSON, nullable=True)
+
     __table_args__ = (
         Index('ix_blocks_chain_number', 'chain', 'block_number'),
         Index('ix_blocks_chain_timestamp', 'chain', 'timestamp'),
@@ -238,6 +295,7 @@ class TokenTransfer(Base):
     timestamp = Column(DateTime, nullable=False)
     status = Column(String, default="pending")
     extra_data = Column(JSON, nullable=True)
+
     __table_args__ = (
         Index('ix_token_transfers_chain_token', 'chain', 'token_address', 'timestamp'),
         Index('ix_token_transfers_chain_tx', 'chain', 'transaction_hash'),
@@ -262,6 +320,7 @@ class EventLog(Base):
     timestamp = Column(DateTime, nullable=False)
     status = Column(String, default="pending")
     extra_data = Column(JSON, nullable=True)
+
     __table_args__ = (
         Index('ix_event_logs_chain_contract', 'chain', 'contract_address', 'timestamp'),
         Index('ix_event_logs_chain_tx', 'chain', 'transaction_hash'),
@@ -298,6 +357,7 @@ class Swap(Base):
     classification_reason = Column(String, nullable=True)
     swap_group_id = Column(String, nullable=True)
     extra_data = Column(JSON, nullable=True)
+
     __table_args__ = (
         UniqueConstraint('chain', 'tx_hash', 'log_index', name='uq_swap_chain_tx_log'),
         Index('ix_swaps_chain_tx', 'chain', 'tx_hash'),
