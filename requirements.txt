@@ -5,7 +5,7 @@ numpy>=1.26.0
 # Exchange API
 gate-api==7.2.129
 # Technical Analysis
-pandas-ta==0.3.14b0
+pandas-ta==0.4.71b0
 # Data & Backtesting
 backtesting==0.3.3
 # News & Sentiment
