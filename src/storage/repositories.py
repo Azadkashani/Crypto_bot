@@ -40,6 +40,12 @@ class SignalRepository(BaseRepository):
     def add(self, signal: Signal):
         self.session.add(signal)
 
+    def get_by_token_timestamp(self, chain: str, token: str, timestamp) -> Optional[Signal]:
+        return self.session.query(Signal).filter_by(chain=chain, token=token, timestamp=timestamp).first()
+
+    def get_recent_signals(self, chain: str, limit: int = 100) -> List[Signal]:
+        return self.session.query(Signal).filter_by(chain=chain).order_by(Signal.timestamp.desc()).limit(limit).all()
+
 class ExcludedAddressRepository(BaseRepository):
     def get_by_address(self, chain: str, address: str) -> Optional[ExcludedAddress]:
         return self.session.query(ExcludedAddress).filter_by(chain=chain, address=address).first()

@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
+from typing import Optional, List
 from enum import Enum
 
 class Mode(str, Enum):
@@ -101,9 +101,39 @@ class Settings(BaseSettings):
     consensus_weight_temporal_convergence: float = 0.10
     consensus_weight_whale_agreement: float = 0.05
 
-    # Signal (not used yet)
-    signal_min_score: float = 85
-    signal_min_confidence: float = 80
+    # Signal (Phase 9)
+    signal_min_score: float = 70
+    signal_min_confidence: float = 70
+
+    # Signal weights (must sum to 1.0)
+    signal_weight_whale_consensus: float = 0.25
+    signal_weight_smart_money: float = 0.15
+    signal_weight_net_whale_flow: float = 0.10
+    signal_weight_independent_whales: float = 0.10
+    signal_weight_market_confirmation: float = 0.20
+    signal_weight_liquidity: float = 0.05
+    signal_weight_volume: float = 0.05
+    signal_weight_entry_timing: float = 0.05
+    signal_weight_market_quality: float = 0.05
+
+    # Market confirmation thresholds
+    market_confirm_bullish_threshold: float = 60
+    market_confirm_bearish_threshold: float = 40
+    market_confirm_neutral_min: float = 40
+    market_confirm_neutral_max: float = 60
+
+    # Entry timing parameters
+    entry_timing_overbought_rsi: float = 70
+    entry_timing_oversold_rsi: float = 30
+
+    # Market quality thresholds
+    min_liquidity_score: float = 50
+    min_volume_score: float = 50
+    min_volatility_score: float = 40
+    max_volatility_score: float = 80
+
+    # Gate.io settings (validation only)
+    gate_available_check: bool = True
 
     # Finality
     required_confirmations: int = 6
@@ -112,7 +142,7 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     cost_tracking_enabled: bool = True
 
-    # Gate.io (not used yet)
+    # Gate.io API (not used for validation in this phase, only public)
     gate_api_key: Optional[str] = None
     gate_api_secret: Optional[str] = None
 
@@ -143,5 +173,20 @@ class Settings(BaseSettings):
     score_average_threshold: float = 70
     score_good_threshold: float = 80
     score_strong_threshold: float = 90
+
+    def validate_signal_weights(self) -> bool:
+        weights = [
+            self.signal_weight_whale_consensus,
+            self.signal_weight_smart_money,
+            self.signal_weight_net_whale_flow,
+            self.signal_weight_independent_whales,
+            self.signal_weight_market_confirmation,
+            self.signal_weight_liquidity,
+            self.signal_weight_volume,
+            self.signal_weight_entry_timing,
+            self.signal_weight_market_quality,
+        ]
+        total = sum(weights)
+        return abs(total - 1.0) < 1e-6
 
 settings = Settings()

@@ -148,13 +148,25 @@ class Signal(Base):
     token = Column(String, nullable=False)
     chain = Column(String, nullable=False)
     timestamp = Column(DateTime, nullable=False)
-    signal_score = Column(Float)
-    confidence = Column(Float)
-    components = Column(JSON)
-    mode = Column(String)
-    gate_available = Column(Boolean)
-    regime = Column(String)
-    status = Column(String)
+    direction = Column(String, default="NEUTRAL")  # LONG/SHORT/NEUTRAL/REJECTED
+    signal_score = Column(Float, default=0.0)
+    confidence = Column(Float, default=0.0)
+    status = Column(String, default="INSUFFICIENT_DATA")  # VALID/WATCH/REJECTED/INSUFFICIENT_DATA/CONFLICTED
+    whale_consensus_score = Column(Float, nullable=True)
+    whale_consensus_confidence = Column(Float, nullable=True)
+    smart_money_score = Column(Float, nullable=True)
+    net_whale_flow = Column(Float, nullable=True)
+    independent_whales = Column(Integer, default=0)
+    market_confirmation_score = Column(Float, nullable=True)
+    entry_timing_score = Column(Float, nullable=True)
+    liquidity_score = Column(Float, nullable=True)
+    volume_score = Column(Float, nullable=True)
+    volatility_score = Column(Float, nullable=True)
+    gate_available = Column(Boolean, default=False)
+    conflict_detected = Column(Boolean, default=False)
+    components = Column(JSON, nullable=True)
+    rejection_reasons = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
         Index('ix_signals_chain_token_timestamp', 'chain', 'token', 'timestamp'),
