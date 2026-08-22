@@ -71,3 +71,6 @@ backtest_results_1h.csv
 forensic_analysis.csv
 losing_trades_analysis.csv
 test_results_strategy.csv
+
+# Research output
+research_output/

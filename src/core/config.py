@@ -138,6 +138,9 @@ class Settings(BaseSettings):
     gate_api_key: Optional[str] = None
     gate_api_secret: Optional[str] = None
 
+    # Gate.io public API for market data (no auth needed)
+    gate_public_base_url: str = "https://api.gateio.ws/api/v4"
+
     buy_confidence_threshold: float = 80
     sell_confidence_threshold: float = 80
     native_asset_symbol: str = "ETH"
@@ -165,7 +168,7 @@ class Settings(BaseSettings):
     score_strong_threshold: float = 90
 
     # Backtest (Phase 10)
-    backtest_entry_rule: str = "NEXT_CANDLE_OPEN"  # NEXT_CANDLE_OPEN | NEXT_CANDLE_CLOSE | NEXT_AVAILABLE_PRICE
+    backtest_entry_rule: str = "NEXT_CANDLE_OPEN"
     backtest_horizons: str = "1m,5m,15m,30m,1h,4h,12h,24h"
     backtest_neutral_threshold_pct: float = 0.1
     backtest_random_baseline_iterations: int = 100
