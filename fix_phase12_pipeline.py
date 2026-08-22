@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).parent
+
+def write(rel, content):
+    path = ROOT / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content.strip() + "\n", encoding="utf-8")
+    print(f"written: {rel}")
+
+# جایگزینی scripts/run_real_research.py با نسخه‌ی اصلاح‌شده
+write("scripts/run_real_research.py", r'''
+#!/usr/bin/env python3
 """
 Real Data Research Run (Phase 12) - FIXED
 Now maps token addresses to Gate.io symbols before evaluation.
@@ -230,3 +245,24 @@ async def run_research():
             print(f"{k}: {v}")
     else:
         logger.warning("No evaluation results produced. Check Gate.io symbols and candle availability.")
+''')
+
+# حذف __pycache__ برای جلوگیری از تداخل
+import shutil
+for pycache in ROOT.rglob("__pycache__"):
+    if pycache.is_dir():
+        shutil.rmtree(pycache)
+
+# اجرای تست‌ها
+print("running tests...")
+res = subprocess.run([sys.executable, "-m", "pytest", "-q", "--disable-warnings"], cwd=ROOT)
+if res.returncode != 0:
+    print("tests failed")
+    sys.exit(1)
+print("tests passed")
+
+# commit و push
+subprocess.run(["git", "add", "-A"], cwd=ROOT, check=True)
+subprocess.run(["git", "commit", "-m", "fix: correct token mapping and evaluation in real research script"], cwd=ROOT, check=True)
+subprocess.run(["git", "push", "origin", "main"], cwd=ROOT, check=True)
+print("Fixed and pushed.")
