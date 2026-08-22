@@ -36,6 +36,10 @@ TOKEN_SYMBOL_MAP = {
     "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984": "UNI",
 }
 
+# Stablecoin symbols to exclude from signals
+STABLECOINS = {"USDT", "USDC", "DAI", "TUSD", "BUSD", "FRAX"}
+
+
 def parse_swap_log(log: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not log.get("topics") or log["topics"][0] != SWAP_TOPIC:
         return None
@@ -92,6 +96,8 @@ async def run_research():
         return
 
     latest_block = await rpc.fetch_block_number()
+    latest_block_data = await rpc.fetch_block_by_number(latest_block, full_tx=False)
+    latest_block_timestamp = int(latest_block_data['timestamp'], 16)
     start_block = max(0, latest_block - settings.research_block_range)
     logger.info(f"Scanning blocks {start_block} to {latest_block}")
 
@@ -164,6 +170,8 @@ async def run_research():
     for token_address, events in token_buys.items():
         if len(events) >= settings.min_independent_whales:
             symbol = TOKEN_SYMBOL_MAP.get(token_address.lower(), "UNKNOWN")
+            if symbol in STABLECOINS:
+                continue
             if symbol == "UNKNOWN":
                 continue
             # Since we haven't fetched block timestamps, we'll assume all in same window for now.
@@ -178,7 +186,7 @@ async def run_research():
                 "independent_selling_whales": 0,
                 "data_quality_score": 90,
             }
-            signal_time = datetime.now(UTC)
+            signal_time = datetime.fromtimestamp(latest_block_timestamp, tz=UTC)
             signal = {
                 "token": symbol,  # use symbol for price data lookup
                 "chain": "ethereum",
@@ -195,11 +203,15 @@ async def run_research():
     results = []
     for sig in signals:
         token_symbol = sig["token"]
-        candles = await gate.get_futures_candlesticks(
-            contract=f"{token_symbol}_USDT",
-            interval=settings.research_gate_interval,
-            limit=100,
-        )
+        try:
+            candles = await gate.get_futures_candlesticks(
+                contract=f"{token_symbol}_USDT",
+                interval=settings.research_gate_interval,
+                limit=100,
+            )
+        except Exception as e:
+            logger.error(f"Failed to get candles for {token_symbol}: {e}")
+            continue
         import pandas as pd
         df = pd.DataFrame([{
             "timestamp": datetime.fromtimestamp(int(c["t"]), tz=UTC),
@@ -230,3 +242,6 @@ async def run_research():
             print(f"{k}: {v}")
     else:
         logger.warning("No evaluation results produced. Check Gate.io symbols and candle availability.")
+
+if __name__ == "__main__":
+    asyncio.run(run_research())
