@@ -173,6 +173,12 @@ class Settings(BaseSettings):
     backtest_neutral_threshold_pct: float = 0.1
     backtest_random_baseline_iterations: int = 100
 
+    # Research (Phase 12)
+    research_block_range: int = 1000  # number of blocks to scan
+    research_gate_interval: str = "5m"
+    research_token_symbols: str = "ETH,USDT,USDC,DAI"  # comma-separated symbols (for Gate.io)
+    research_pool_addresses: str = ""  # comma-separated Uniswap V2 pool addresses (user to provide)
+
     def validate_signal_weights(self) -> bool:
         weights = [
             self.signal_weight_whale_consensus,
