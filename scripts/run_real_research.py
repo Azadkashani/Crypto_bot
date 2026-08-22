@@ -186,7 +186,8 @@ async def run_research():
                 "independent_selling_whales": 0,
                 "data_quality_score": 90,
             }
-            signal_time = datetime.fromtimestamp(latest_block_timestamp, tz=UTC)
+            # Use a 5-minute delay to ensure future candles are available for evaluation
+            signal_time = datetime.fromtimestamp(latest_block_timestamp, tz=UTC) - timedelta(minutes=5)
             signal = {
                 "token": symbol,  # use symbol for price data lookup
                 "chain": "ethereum",
