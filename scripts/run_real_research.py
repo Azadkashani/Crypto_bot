@@ -102,6 +102,8 @@ async def run_research():
     logger.info(f"Scanning blocks {start_block} to {latest_block}")
 
     all_swaps = []
+    chunk_size = 9000  # کم‌تر از 10000 برای اطمینان از عدم عبور از محدودیت RPC
+
     for pool_addr in pool_addresses:
         try:
             token0, token1 = await fetch_pool_tokens(rpc, pool_addr)
@@ -110,55 +112,61 @@ async def run_research():
             logger.error(f"Failed to fetch tokens for pool {pool_addr}: {e}")
             continue
 
-        filter_params = {
-            "fromBlock": hex(start_block),
-            "toBlock": hex(latest_block),
-            "address": pool_addr,
-            "topics": [SWAP_TOPIC],
-        }
-        logs = await rpc.fetch_logs(filter_params)
-        logger.info(f"Pool {pool_addr}: {len(logs)} swap logs found")
-
-        for log in logs:
-            parsed = parse_swap_log(log)
-            if not parsed:
-                continue
-            # تعیین توکن ورودی و خروجی بر اساس مقادیر غیرصفر
-            if parsed["amount0_in"] > 0 and parsed["amount1_out"] > 0:
-                # کاربر token0 را می‌دهد و token1 را می‌گیرد
-                token_in = token0
-                token_out = token1
-                # اگر توکن خروجی غیراستیبل باشد، BUY است
-                symbol_out_tmp = TOKEN_SYMBOL_MAP.get(token_out.lower(), "UNKNOWN")
-                side = "BUY" if symbol_out_tmp not in STABLECOINS else "SELL"
-            elif parsed["amount1_in"] > 0 and parsed["amount0_out"] > 0:
-                # کاربر token1 را می‌دهد و token0 را می‌گیرد
-                token_in = token1
-                token_out = token0
-                symbol_out_tmp = TOKEN_SYMBOL_MAP.get(token_out.lower(), "UNKNOWN")
-                side = "BUY" if symbol_out_tmp not in STABLECOINS else "SELL"
-            else:
-                continue  # multi-hop یا غیرقابل تشخیص
-
-            # Map to symbols
-            symbol_in = TOKEN_SYMBOL_MAP.get(token_in.lower(), None)
-            symbol_out = TOKEN_SYMBOL_MAP.get(token_out.lower(), None)
-            if not symbol_in or not symbol_out:
-                # Skip pairs where we don't have Gate symbol
+        # تقسیم بازه‌ی بلاکی به تکه‌های کوچک‌تر
+        current_start = start_block
+        while current_start <= latest_block:
+            chunk_end = min(current_start + chunk_size - 1, latest_block)
+            filter_params = {
+                "fromBlock": hex(current_start),
+                "toBlock": hex(chunk_end),
+                "address": pool_addr,
+                "topics": [SWAP_TOPIC],
+            }
+            try:
+                logs = await rpc.fetch_logs(filter_params)
+            except Exception as e:
+                logger.error(f"Error fetching logs for pool {pool_addr} chunk {current_start}-{chunk_end}: {e}")
+                current_start = chunk_end + 1
                 continue
 
-            parsed.update({
-                "token_in": token_in,
-                "token_out": token_out,
-                "symbol_in": symbol_in,
-                "symbol_out": symbol_out,
-                "side": side,
-                "amount_in": parsed["amount0_in"] if side == "BUY" else parsed["amount1_in"],
-                "amount_out": parsed["amount1_out"] if side == "BUY" else parsed["amount0_out"],
-                "token0": token0,
-                "token1": token1,
-            })
-            all_swaps.append(parsed)
+            logger.info(f"Pool {pool_addr} chunk {current_start}-{chunk_end}: {len(logs)} swap logs found")
+
+            for log in logs:
+                parsed = parse_swap_log(log)
+                if not parsed:
+                    continue
+                if parsed["amount0_in"] > 0 and parsed["amount1_out"] > 0:
+                    token_in = token0
+                    token_out = token1
+                    symbol_out_tmp = TOKEN_SYMBOL_MAP.get(token_out.lower(), "UNKNOWN")
+                    side = "BUY" if symbol_out_tmp not in STABLECOINS else "SELL"
+                elif parsed["amount1_in"] > 0 and parsed["amount0_out"] > 0:
+                    token_in = token1
+                    token_out = token0
+                    symbol_out_tmp = TOKEN_SYMBOL_MAP.get(token_out.lower(), "UNKNOWN")
+                    side = "BUY" if symbol_out_tmp not in STABLECOINS else "SELL"
+                else:
+                    continue
+
+                symbol_in = TOKEN_SYMBOL_MAP.get(token_in.lower(), None)
+                symbol_out = TOKEN_SYMBOL_MAP.get(token_out.lower(), None)
+                if not symbol_in or not symbol_out:
+                    continue
+
+                parsed.update({
+                    "token_in": token_in,
+                    "token_out": token_out,
+                    "symbol_in": symbol_in,
+                    "symbol_out": symbol_out,
+                    "side": side,
+                    "amount_in": parsed["amount0_in"] if side == "BUY" else parsed["amount1_in"],
+                    "amount_out": parsed["amount1_out"] if side == "BUY" else parsed["amount0_out"],
+                    "token0": token0,
+                    "token1": token1,
+                })
+                all_swaps.append(parsed)
+
+            current_start = chunk_end + 1
 
     if not all_swaps:
         logger.warning("No swaps found after filtering.")
