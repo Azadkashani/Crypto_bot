@@ -27,14 +27,15 @@ SWAP_TOPIC = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822
 
 # Mapping token address -> Gate.io symbol
 TOKEN_SYMBOL_MAP = {
-    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "ETH",  # WETH
-    "0xdac17f958d2ee523a2206206994597c13d831ec7": "USDT",
-    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "USDC",
-    "0x6b175474e89094c44da98b954eedeac495271d0f": "DAI",
-    "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": "BTC",  # WBTC
-    "0x514910771af9ca656af840dff83e8264ecf986ca": "LINK",
-    "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984": "UNI",
+    "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0": "MATIC",
+    "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce": "SHIB",
+    "0x6982508145454ce325ddbe47a25d4ec3d2311933": "PEPE",
+    "0x4fabb145d64652a948d72533023f6e7a623c7c53": "BUSD",
+    "0x1f573d6fb3f13d689ff844b4ce37794d79a7ff1c": "BNT",
+    "0x0f5d2fb29fb7d3cfee444a200298f468908cc942": "MANA",
+    "0xf629cbd94d3791c9250152bd8dfbdf380e2a7b9b": "ENJ",
 }
+
 
 # Stablecoin symbols to exclude from signals
 STABLECOINS = {"USDT", "USDC", "DAI", "TUSD", "BUSD", "FRAX"}
@@ -174,7 +175,32 @@ async def run_research():
 
     logger.info(f"Total swaps collected: {len(all_swaps)}")
 
+    # اضافه کردن توکن‌های جدید به لیست اسکن با کشف خودکار Poolها
+    factory_address = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+    weth_address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+
+    # کشف Pool برای توکن‌های جدید
+    additional_pools = []
+    for token_addr in new_token_mappings.keys():
+        # getPair(token0, token1) -> pair address
+        encoded = "0xe6a43905" + token_addr.lower()[2:].zfill(64) + weth_address.lower()[2:].zfill(64)
+        try:
+            pair_result = await rpc._rpc_call("eth_call", [{"to": factory_address, "data": encoded}, "latest"])
+            pair_addr = "0x" + pair_result[-40:]
+            if pair_addr != "0x0000000000000000000000000000000000000000":
+                additional_pools.append(pair_addr)
+                logger.info(f"Discovered pool {pair_addr} for {new_token_mappings[token_addr]}/WETH")
+        except Exception as e:
+            logger.warning(f"Failed to discover pool for {new_token_mappings.get(token_addr, token_addr)}: {e}")
+
+    # افزودن به لیست pool_addresses
+    pool_addresses.extend(additional_pools)
+    # حذف تکراری‌ها
+    pool_addresses = list(set(pool_addresses))
+    logger.info(f"Total pools to scan: {len(pool_addresses)}")
+
     # Group buy events by token_out (address)
+
     buy_events = [s for s in all_swaps if s["side"] == "BUY"]
     token_buys = defaultdict(list)
     for ev in buy_events:
