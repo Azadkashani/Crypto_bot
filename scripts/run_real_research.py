@@ -193,7 +193,7 @@ async def run_research():
                 "data_quality_score": 90,
             }
             # Use a 5-minute delay to ensure future candles are available for evaluation
-            signal_time = datetime.fromtimestamp(latest_block_timestamp, tz=UTC) - timedelta(minutes=5)
+            signal_time = datetime.fromtimestamp(latest_block_timestamp, tz=UTC) - timedelta(minutes=30)
             signal = {
                 "token": symbol,  # use symbol for price data lookup
                 "chain": "ethereum",
