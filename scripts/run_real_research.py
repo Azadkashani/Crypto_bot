@@ -123,16 +123,22 @@ async def run_research():
             parsed = parse_swap_log(log)
             if not parsed:
                 continue
+            # تعیین توکن ورودی و خروجی بر اساس مقادیر غیرصفر
             if parsed["amount0_in"] > 0 and parsed["amount1_out"] > 0:
+                # کاربر token0 را می‌دهد و token1 را می‌گیرد
                 token_in = token0
                 token_out = token1
-                side = "BUY"
+                # اگر توکن خروجی غیراستیبل باشد، BUY است
+                symbol_out_tmp = TOKEN_SYMBOL_MAP.get(token_out.lower(), "UNKNOWN")
+                side = "BUY" if symbol_out_tmp not in STABLECOINS else "SELL"
             elif parsed["amount1_in"] > 0 and parsed["amount0_out"] > 0:
+                # کاربر token1 را می‌دهد و token0 را می‌گیرد
                 token_in = token1
                 token_out = token0
-                side = "SELL"
+                symbol_out_tmp = TOKEN_SYMBOL_MAP.get(token_out.lower(), "UNKNOWN")
+                side = "BUY" if symbol_out_tmp not in STABLECOINS else "SELL"
             else:
-                continue  # skip complex for now
+                continue  # multi-hop یا غیرقابل تشخیص
 
             # Map to symbols
             symbol_in = TOKEN_SYMBOL_MAP.get(token_in.lower(), None)
