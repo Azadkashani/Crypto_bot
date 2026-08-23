@@ -47,13 +47,13 @@ def compute_mfe_mae(candles: pd.DataFrame, entry_time: datetime, entry_price: fl
     if direction == 'LONG':
         max_high = window['high'].max()
         min_low = window['low'].min()
-        mfe = (max_high - entry_price) / entry_price * 100
-        mae = (entry_price - min_low) / entry_price * 100
+        mfe = max(0, (max_high - entry_price) / entry_price * 100)
+        mae = max(0, (entry_price - min_low) / entry_price * 100)
     elif direction == 'SHORT':
         max_high = window['high'].max()
         min_low = window['low'].min()
-        mfe = (entry_price - min_low) / entry_price * 100
-        mae = (max_high - entry_price) / entry_price * 100
+        mfe = max(0, (entry_price - min_low) / entry_price * 100)
+        mae = max(0, (max_high - entry_price) / entry_price * 100)
     else:
         mfe, mae = None, None
     return mfe, mae
