@@ -27,18 +27,41 @@ SWAP_TOPIC = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822
 
 # Mapping token address -> Gate.io symbol
 TOKEN_SYMBOL_MAP = {
-    "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0": "MATIC",
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "ETH",  # WETH
+    "0xdac17f958d2ee523a2206206994597c13d831ec7": "USDT",
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "USDC",
+    "0x6b175474e89094c44da98b954eedeac495271d0f": "DAI",
+    "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": "BTC",  # WBTC
+    "0x514910771af9ca656af840dff83e8264ecf986ca": "LINK",
+    "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984": "UNI",
+    "0xc011a73ee8576fb46f5e1c5751ca3b9fe0af2a6f": "SNX",
+    "0x0bc529c00c6401aef6d220be8c6ea1667f6ad93e": "YFI",
+    "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9": "AAVE",
     "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce": "SHIB",
     "0x6982508145454ce325ddbe47a25d4ec3d2311933": "PEPE",
-    "0x4fabb145d64652a948d72533023f6e7a623c7c53": "BUSD",
-    "0x1f573d6fb3f13d689ff844b4ce37794d79a7ff1c": "BNT",
-    "0x0f5d2fb29fb7d3cfee444a200298f468908cc942": "MANA",
-    "0xf629cbd94d3791c9250152bd8dfbdf380e2a7b9b": "ENJ",
+    "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0": "MATIC",
 }
+
 
 
 # Stablecoin symbols to exclude from signals
 STABLECOINS = {"USDT", "USDC", "DAI", "TUSD", "BUSD", "FRAX"}
+TOKEN_DECIMALS = {
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": 18,  # WETH
+    "0xdac17f958d2ee523a2206206994597c13d831ec7": 6,   # USDT
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": 6,   # USDC
+    "0x6b175474e89094c44da98b954eedeac495271d0f": 18,  # DAI
+    "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": 8,   # WBTC
+    "0x514910771af9ca656af840dff83e8264ecf986ca": 18,  # LINK
+    "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984": 18,  # UNI
+    "0xc011a73ee8576fb46f5e1c5751ca3b9fe0af2a6f": 18,  # SNX
+    "0x0bc529c00c6401aef6d220be8c6ea1667f6ad93e": 18,  # YFI
+    "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9": 18,  # AAVE
+    "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce": 18,  # SHIB
+    "0x6982508145454ce325ddbe47a25d4ec3d2311933": 18,  # PEPE
+    "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0": 18,  # MATIC
+}
+
 
 
 def parse_swap_log(log: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -97,6 +120,24 @@ async def run_research():
         return
 
     latest_block = await rpc.fetch_block_number()
+
+    # دریافت قیمت‌های لحظه‌ای توکن‌ها از Gate.io
+    token_prices = {}
+    for addr, symbol in TOKEN_SYMBOL_MAP.items():
+        if symbol in STABLECOINS:
+            token_prices[symbol] = 1.0
+            continue
+        try:
+            ticker = await gate.get_futures_ticker(f"{symbol}_USDT")
+            if ticker and 'last' in ticker:
+                token_prices[symbol] = float(ticker['last'])
+            else:
+                token_prices[symbol] = 0.0
+        except Exception as e:
+            logger.warning(f"Could not fetch price for {symbol}: {e}")
+            token_prices[symbol] = 0.0
+    logger.info(f"Fetched prices for {len(token_prices)} tokens")
+
     latest_block_data = await rpc.fetch_block_by_number(latest_block, full_tx=False)
     latest_block_timestamp = int(latest_block_data['timestamp'], 16)
     start_block = max(0, latest_block - settings.research_block_range)
@@ -154,16 +195,29 @@ async def run_research():
                 if not symbol_in or not symbol_out:
                     continue
 
+                # محاسبه USD
+                token_in_decimals = TOKEN_DECIMALS.get(token_in.lower(), 18)
+                amount_in_raw = parsed["amount0_in"] if side == "BUY" else parsed["amount1_in"]
+                if symbol_in in STABLECOINS:
+                    usd_value = amount_in_raw / (10 ** token_in_decimals)
+                else:
+                    price = token_prices.get(symbol_in, 0.0)
+                    if price > 0:
+                        usd_value = (amount_in_raw / (10 ** token_in_decimals)) * price
+                    else:
+                        usd_value = 0.0
+
                 parsed.update({
                     "token_in": token_in,
                     "token_out": token_out,
                     "symbol_in": symbol_in,
                     "symbol_out": symbol_out,
                     "side": side,
-                    "amount_in": parsed["amount0_in"] if side == "BUY" else parsed["amount1_in"],
+                    "amount_in": amount_in_raw,
                     "amount_out": parsed["amount1_out"] if side == "BUY" else parsed["amount0_out"],
                     "token0": token0,
                     "token1": token1,
+                    "usd_value": usd_value,
                 })
                 all_swaps.append(parsed)
 
@@ -174,30 +228,6 @@ async def run_research():
         return
 
     logger.info(f"Total swaps collected: {len(all_swaps)}")
-
-    # اضافه کردن توکن‌های جدید به لیست اسکن با کشف خودکار Poolها
-    factory_address = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-    weth_address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-
-    # کشف Pool برای توکن‌های جدید
-    additional_pools = []
-    for token_addr in new_token_mappings.keys():
-        # getPair(token0, token1) -> pair address
-        encoded = "0xe6a43905" + token_addr.lower()[2:].zfill(64) + weth_address.lower()[2:].zfill(64)
-        try:
-            pair_result = await rpc._rpc_call("eth_call", [{"to": factory_address, "data": encoded}, "latest"])
-            pair_addr = "0x" + pair_result[-40:]
-            if pair_addr != "0x0000000000000000000000000000000000000000":
-                additional_pools.append(pair_addr)
-                logger.info(f"Discovered pool {pair_addr} for {new_token_mappings[token_addr]}/WETH")
-        except Exception as e:
-            logger.warning(f"Failed to discover pool for {new_token_mappings.get(token_addr, token_addr)}: {e}")
-
-    # افزودن به لیست pool_addresses
-    pool_addresses.extend(additional_pools)
-    # حذف تکراری‌ها
-    pool_addresses = list(set(pool_addresses))
-    logger.info(f"Total pools to scan: {len(pool_addresses)}")
 
     # Group buy events by token_out (address)
 
