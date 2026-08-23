@@ -138,6 +138,24 @@ async def run_research():
             token_prices[symbol] = 0.0
     logger.info(f"Fetched prices for {len(token_prices)} tokens")
 
+
+    # دریافت قیمت‌های لحظه‌ای توکن‌ها از Gate.io
+    token_prices = {}
+    for addr, symbol in TOKEN_SYMBOL_MAP.items():
+        if symbol in STABLECOINS:
+            token_prices[symbol] = 1.0
+            continue
+        try:
+            ticker = await gate.get_futures_ticker(f"{symbol}_USDT")
+            if ticker and 'last' in ticker:
+                token_prices[symbol] = float(ticker['last'])
+            else:
+                token_prices[symbol] = 0.0
+        except Exception as e:
+            logger.warning(f"Could not fetch price for {symbol}: {e}")
+            token_prices[symbol] = 0.0
+    logger.info(f"Fetched prices for {len(token_prices)} tokens")
+
     latest_block_data = await rpc.fetch_block_by_number(latest_block, full_tx=False)
     latest_block_timestamp = int(latest_block_data['timestamp'], 16)
     start_block = max(0, latest_block - settings.research_block_range)
